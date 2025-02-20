@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2025 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import os
+import yaml
+import agent
+import json
+
+ALERT_MANAGER_DEFAULT_CONFIG = {
+    'global': {},
+    'route': {
+        'receiver': 'default-receiver',
+        'group_by': ['alertname', 'node'],
+        'group_wait': '30s',
+        'group_interval': '5m',
+        'repeat_interval': '3h',
+        'routes': [
+        {
+            'receiver': 'default-receiver',
+            'continue': True,
+            'matchers': ['service=~".*"'],
+        }
+        ]
+    },
+    'inhibit_rules': [
+        {
+        'source_matchers': ['severity="critical"'],
+        'target_matchers': ['severity="warning"'],
+        'equal': ['alertname']
+        }
+    ],
+    'receivers': [
+        {
+        'name': 'default-receiver',
+        'webhook_configs': [
+            {
+            'url': 'http://localhost:9095',
+            'send_resolved': True
+            }
+        ]
+        }
+    ],
+    'templates': ["/etc/alertmanager/templates/*.tmpl"]
+}
+
+def generate_prometheus_config(redis_client):
+    loki = redis_client.get("cluster/default_instance/loki")
+    logcli = redis_client.hgetall(f'module/{loki}/environment')
+    # we want to build the loki address
+    logcli["LOKI_ADDR"] = logcli["LOKI_ADDR"] + ':' + logcli["LOKI_HTTP_PORT"]
+
+    with open('prometheus.yml', 'w', encoding='utf-8') as fp:
+        fp.write("global:\n")
+        fp.write("scrape_configs:\n")
+        fp.write('  - job_name: "loki"\n')
+        fp.write('    basic_auth:\n')
+        fp.write(f'      username: "{logcli["LOKI_API_AUTH_USERNAME"]}"\n')
+        fp.write(f'      password: "{logcli["LOKI_API_AUTH_PASSWORD"]}"\n')
+        fp.write('    static_configs:\n')
+        fp.write(f'      - targets: ["{logcli["LOKI_ADDR"].removeprefix("http://")}"]\n')
+        fp.write('  - job_name: "providers"\n')
+        fp.write('    file_sd_configs:\n')
+        fp.write('      - files:\n')
+        fp.write('        - "/prometheus/prometheus.d/*.yml"\n')
+        fp.write('alerting:\n')
+        fp.write('  alertmanagers:\n')
+        fp.write('    - static_configs:\n')
+        fp.write('      - targets:\n')
+        fp.write('        - localhost:9093\n')
+        fp.write('rule_files:\n')
+        fp.write('  - "/prometheus/rules.d/*yml"\n')
+
+def validate_and_generate_provider_configs(redis_client):
+    for nkey in redis_client.scan_iter("node/*/vpn"):
+        node_id = nkey.split('/')[1]
+        vpn = redis_client.hgetall(nkey)
+
+        # Generate configuration file
+        with open(f"prometheus.d/node_{node_id}.yml", 'w', encoding='utf-8') as file:
+            file.write('- targets:\n')
+            file.write(f"    - '{vpn.get('ip_address')}:9100'\n")
+            file.write('  labels:\n')
+            file.write(f"    node: {node_id}\n")
+
+def clean_up_old_provider_configs(redis_client):
+    nodes = []
+    for nkey in redis_client.scan_iter("node/*/vpn"):
+        nodes.append(f"node_{nkey.split('/')[1]}.yml")
+    
+    # Search for all node_*.yml files, delete the ones that are not in the nodes list
+    with os.scandir('prometheus.d') as it:
+        for entry in it:
+            if entry.is_file() and entry.name.startswith('node_') and entry.name not in nodes:
+                os.remove(entry.path)
+
+def read_config():
+    try:
+        with open('config.json', 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def generate_alertmanagr_config(redis_client):
+    config = read_config()
+    smtp = agent.get_smarthost_settings(redis_client)
+    if 'host' in smtp and smtp['host']:
+        smtp_config = {
+            'smtp_from': config.get('mail_from', None) if config.get('mail_from', None) else 'alertmanager@' + agent.get_hostname(),
+            'smtp_smarthost': f"{smtp['host']}:{smtp['port']}",
+            'smtp_auth_username': smtp['username'],
+            'smtp_auth_password': smtp['password'],
+            'smtp_require_tls': smtp['encrypt_smtp'] != 'none',
+        }
+    else:
+        smtp_config = {}
+
+    alert_config = ALERT_MANAGER_DEFAULT_CONFIG
+    alert_config['global'] = smtp_config
+
+    if smtp_config != {} and 'mail_to' in config and config['mail_to']:
+        mail_config = {
+            'to': ",".join(config['mail_to'])
+        }
+        if 'mail_template' in config and config['mail_template']:
+            mail_config['html'] = '{{ template "custom_mail_html" . }}'
+            mail_config['headers'] = { 'subject': '{{ template "custom_mail_subject" . }}' }
+        alert_config['receivers'].append({
+            'email_configs': [ mail_config ],
+            'name': 'mail-alert'
+        })
+        alert_config['route']['routes'].append({
+            'matchers': ['service=~".*"'],
+            'receiver': 'mail-alert',
+            'continue': True
+        })
+
+    os.makedirs('templates.d', exist_ok=True)
+
+    with open('alertmanager.yml', 'w') as f:
+        yaml.safe_dump(json.loads(json.dumps(alert_config)), f, default_flow_style=False, sort_keys=False)
+
+
+# connect to client and fetch providers for prometheus
+redis_client = agent.redis_connect(use_replica=True)
+
+# Generate providers configuration
+generate_prometheus_config(redis_client)
+validate_and_generate_provider_configs(redis_client)
+clean_up_old_provider_configs(redis_client)
+
+# Generate alertmanager configuration
+generate_alertmanagr_config(redis_client)

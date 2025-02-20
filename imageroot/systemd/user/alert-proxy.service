@@ -1,0 +1,32 @@
+#
+# This systemd unit starts an alert-proxy instance using Podman.
+# Most parts of this file come from podman-generate-systemd.
+#
+[Unit]
+Description=Alert-proxy
+After=prometheus.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+EnvironmentFile=%S/state/environment
+EnvironmentFile=%S/state/alert-proxy.env
+WorkingDirectory=%S/state
+Restart=always
+ExecStartPre=/bin/rm -f %t/alert-proxy.pid %t/alert-proxy.ctr-id
+ExecStart=/usr/bin/podman run \
+    --detach \
+    --conmon-pidfile=%t/alert-proxy.pid \
+    --cidfile=%t/alert-proxy.ctr-id \
+    --cgroups=no-conmon \
+    --replace --name=%N \
+    --network=host \
+    --env-file=%S/state/environment \
+    --env-file=%S/state/alert-proxy.env \
+    ${ALERT_PROXY_IMAGE}
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/alert-proxy.ctr-id -t 10
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/alert-proxy.ctr-id
+PIDFile=%t/alert-proxy.pid
+Type=forking
+
+[Install]
+WantedBy=default.target

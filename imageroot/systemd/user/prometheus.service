@@ -1,0 +1,35 @@
+#
+# This systemd unit starts a prometheus instance using Podman.
+# Most parts of this file come from podman-generate-systemd.
+#
+[Unit]
+Description=Prometheus server
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+EnvironmentFile=%S/state/environment
+WorkingDirectory=%S/state
+Restart=always
+ExecStartPre=/bin/rm -f %t/prometheus.pid %t/prometheus.ctr-id
+ExecStartPre=/usr/bin/mkdir -vp %S/state/prometheus.d
+ExecStartPre=/usr/local/bin/runagent reload_configuration
+ExecStartPre=/usr/local/bin/runagent write-alert-proxy-envfile
+ExecStart=/usr/bin/podman run \
+    --detach \
+    --conmon-pidfile=%t/prometheus.pid \
+    --cidfile=%t/prometheus.ctr-id \
+    --cgroups=no-conmon \
+    --replace --name=%N \
+    --network=host \
+    --volume=%S/state/prometheus.yml:/prometheus/prometheus.yml:z \
+    --volume=./prometheus.d/:/prometheus/prometheus.d/:z \
+    --volume=./rules.d/:/prometheus/rules.d/:z \
+    --volume=prometheus-data:/prometheus:z \
+    ${PROMETHEUS_IMAGE} --web.external-url=/${PROMETHEUS_PATH}/ --web.listen-address=:9091
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/prometheus.ctr-id -t 10
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/prometheus.ctr-id
+PIDFile=%t/prometheus.pid
+Type=forking
+
+[Install]
+WantedBy=default.target

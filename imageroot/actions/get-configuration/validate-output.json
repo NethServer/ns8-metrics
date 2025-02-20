@@ -1,0 +1,23 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Get metrics configuration",
+    "$id": "http://nethserver.org/json-schema/task/output/prometheus/get-configuration",
+    "description": "Get metrics configuration",
+    "examples": [
+        {
+            "prometheus_path": null,
+            "grafana_path": null,
+            "lets_encrypt": false,
+            "mail_to": [],
+            "mail_from": null
+        },
+        {
+            "prometheus_path": "prometheus",
+            "grafana_path": "grafana",
+            "lets_encrypt": true,
+            "mail_to": [ "alert@nethserver.org" ],
+            "mail_from": "no-reply@nethserver.org"
+        }
+    ],
+    "type": "object"
+}

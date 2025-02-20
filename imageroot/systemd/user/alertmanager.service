@@ -1,0 +1,31 @@
+#
+# This systemd unit starts an alertmanager instance using Podman.
+# Most parts of this file come from podman-generate-systemd.
+#
+[Unit]
+Description=Prometheus alertmanager
+After=prometheus.service
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+EnvironmentFile=%S/state/environment
+WorkingDirectory=%S/state
+Restart=always
+ExecStartPre=/bin/rm -f %t/alertmanager.pid %t/alertmanager.ctr-id
+ExecStart=/usr/bin/podman run \
+    --detach \
+    --conmon-pidfile=%t/alertmanager.pid \
+    --cidfile=%t/alertmanager.ctr-id \
+    --cgroups=no-conmon \
+    --replace --name=%N \
+    --network=host \
+    --volume=%S/state/alertmanager.yml:/alertmanager.yml:z \
+    --volume=%S/state/templates.d/:/etc/alertmanager/templates:z \
+    ${ALERTMANAGER_IMAGE} --config.file=/alertmanager.yml
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/alertmanager.ctr-id -t 10
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/alertmanager.ctr-id
+PIDFile=%t/alertmanager.pid
+Type=forking
+
+[Install]
+WantedBy=default.target

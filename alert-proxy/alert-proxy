@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2025 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import asyncio
+import aiohttp
+import sys
+import os
+from aiohttp import web
+
+# Alarm states
+UNKNOWN = 'U'
+CLEAR = '0'
+CRITICAL = 'F'
+
+# Prepare runtime parameters
+node_name = 'node_' + os.environ.get('NODE_ID', '0')
+auth_token = os.environ.get("NMON_ALERT_AUTH_TOKEN")
+alert_provider = os.environ.get("NMON_ALERT_PROVIDER")
+system_id = os.environ.get("NMON_ALERT_SYSTEM_ID")
+dartagnan_url = os.environ.get("NMON_DARTAGNAN_URL")
+
+async def send_alert(url, value, alert, retry=3):
+    if value == CLEAR:
+        astatus = 'OK'
+    elif value == CRITICAL:
+        astatus = 'FAILURE'
+    else:
+        return
+    ctimeout = aiohttp.ClientTimeout(total=60.0, connect=50, sock_connect=40, sock_read=10)
+    ex_message = None
+    try:
+        async with aiohttp.ClientSession(timeout=ctimeout, headers={'Authorization': 'token ' + auth_token}) as cs:
+            await cs.post(url, json={"lk":system_id, "alert_id": alert, "status": astatus})
+    except Exception as ex:
+        ex_message = str(ex)
+    if ex_message:
+        if retry > 0:
+            print("send_alert temporary failure:", value, alert, ex_message, f"-- retrying in 20 seconds", file=sys.stderr)
+            await asyncio.sleep(20)
+            await send_alert(url, value, alert, retry - 1)
+        else:
+            print("send_alert aborted:", value, alert, ex_message, file=sys.stderr)
+
+async def raise_alert(value, alert):
+    if value == CLEAR:
+        svalue = 'CLEAR'
+    elif value == CRITICAL:
+        svalue = 'CRITICAL'
+    else:
+        svalue = 'UNKNOWN'
+    if alert.startswith('load'):
+        print('NOTICE', svalue, alert, file=sys.stderr)
+        return # do not send load alarm at all, just log it
+    else:
+        print('ALERT', svalue, alert, file=sys.stderr)
+    if not auth_token:
+        print("No auth token, alert not sent", file=sys.stderr)
+        return
+    if alert_provider == 'nsent':
+        await send_alert('https://my.nethesis.it/isa/alerts/store', value, alert)
+    elif alert_provider == 'nscom':
+        await send_alert(f'{dartagnan_url}/machine/alerts/store', value, alert)
+
+async def handle_post_request(request):
+    # Convert alertsmanager alerts into my alert format
+    try:
+        data = await request.json()
+        alerts = data.get('alerts', [])
+        for alert in alerts:
+            status = alert.get('status')
+            labels = alert.get('labels', {})
+            node_id = labels.get('node', 'unknown')
+            # Remap to my alert id format
+            alert_name = labels.get('alertname', 'unknown').replace('_', ':')
+            alert_id = f"{alert_name}:{node_id}"
+            if status == 'firing':
+                value = CRITICAL
+            elif status == 'resolved':
+                value = CLEAR
+            else:
+                value = UNKNOWN
+            await raise_alert(value, alert_id)
+        return aiohttp.web.Response(text="Alerts processed", status=200)
+    except Exception as e:
+        return aiohttp.web.Response(text=str(e), status=500)
+
+async def handle_get(request):
+    # Do nothing, just return OK: this can be used to check if the service is running
+    return web.Response(text="OK", status=200)
+
+
+
+if __name__ == '__main__':
+    app = web.Application()
+    app.add_routes([
+        web.get('/', handle_get),
+        web.post('/', handle_post_request)
+    ])
+    web.run_app(app, port=9095, print=print("alert-proxy server started", file=sys.stderr))
+    

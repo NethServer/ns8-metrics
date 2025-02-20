@@ -1,0 +1,59 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Configure metrics stack",
+    "$id": "http://nethserver.org/json-schema/task/input/grafana/configure",
+    "description": "Configure metrics stack",
+    "examples": [
+        {
+            "prometheus_path": "prometheus",
+            "grafana_path": "grafana",
+            "lets_encrypt": true,
+            "mail_to": [ "alert@nethserver.org" ],
+            "mail_from": "no-reply@nethserver.org",
+            "mail_template": "custom_mail"
+        }
+    ],
+    "type": "object",
+    "required": [
+        "prometheus_path",
+        "grafana_path",
+        "lets_encrypt",
+        "mail_to",
+        "mail_from"
+    ],
+    "properties": {
+        "lets_encrypt": {
+            "type": "boolean",
+            "title": "Let's Encrypt certificate",
+            "description": "Request a valid Let's Encrypt certificate."
+        },
+        "prometheus_path": {
+            "type": "string",
+            "description": "Path to access prometheus interface, like 'prometheus'. Prometheus will be available at https://<hostname>/<prometheus_path>. If empty, prometheus will not be accessible.",
+            "format": "string"        },
+        "grafana_path": {
+            "type": "string",
+            "description": "Path to access grafana interface, like 'grafana'. Grafana will be available at https://<hostname>/<grafana_path>. If empty, grafana will not run.",
+            "format": "string"
+        },
+        "mail_from": {
+            "type": "string",
+            "description": "Email address used as sender for alerts.",
+            "format": "email"
+        },
+        "mail_to": {
+            "type": "array",
+            "description": "Email addresses used as recipients for alerts.",
+            "items": {
+                "type": "string",
+                "format": "email"
+            }
+        },
+        "mail_template": {
+            "type": "string",
+            "description": "Name of the custom mail template to use for alerts. The file with the template must already exists inside templates.d/ directory.",
+            "format": "string"
+        }
+    }
+}
+

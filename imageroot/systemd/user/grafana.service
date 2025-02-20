@@ -1,0 +1,35 @@
+#
+# This systemd unit starts a grafana instance using Podman.
+# Most parts of this file come from podman-generate-systemd.
+#
+[Unit]
+Description=Grafana server
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+EnvironmentFile=%S/state/environment
+WorkingDirectory=%S/state
+Restart=always
+ExecStartPre=/bin/rm -f %t/grafana.pid %t/grafana.ctr-id
+ExecStartPre=runagent provision-grafana
+ExecStart=/usr/bin/podman run \
+    --detach \
+    --conmon-pidfile=%t/grafana.pid \
+    --cidfile=%t/grafana.ctr-id \
+    --cgroups=no-conmon \
+    --replace --name=%N \
+    --network=host \
+    --volume=grafana-data:/var/lib/grafana:z \
+    --volume=%S/state/local.yml:/etc/grafana/provisioning/datasources/local.yml:z \
+    --volume=%S/etc/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:z \
+    --volume=%S/etc/dashboards/:/etc/grafana/dashboards:z \
+    -e GF_SERVER_SERVE_FROM_SUB_PATH=true \
+    -e GF_SERVER_ROOT_URL=/${GRAFANA_PATH} \
+    ${GRAFANA_IMAGE}
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/grafana.ctr-id -t 10
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/grafana.ctr-id
+PIDFile=%t/grafana.pid
+Type=forking
+
+[Install]
+WantedBy=default.target

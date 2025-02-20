@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2025 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import agent
+
+##
+## we need to made a first discover with default value, 
+## probably prometheus will be instally later if not found yet
+##
+
+# Read prometheus leader node
+rdb = agent.redis_connect(use_replica=True)
+default_instance = agent.resolve_agent_id("prometheus@cluster")  or "module/metrics1"
+node_path = rdb.hget(f'{default_instance}/environment', 'PROMETHEUS_PATH') or ""
+
+# Read loki config from Redis
+loki = agent.resolve_agent_id("loki@cluster")
+logcli = rdb.hgetall(f'{loki}/environment')
+logcli["LOKI_ADDR"] = 'http://'+logcli["LOKI_ADDR"]+':'+logcli["LOKI_HTTP_PORT"]
+
+with open('local.yml', 'w') as fp:
+    fp.write("apiVersion: 1\n")
+    fp.write("datasources:\n")
+    fp.write('  - name: Local Promethus\n')
+    fp.write('    type: prometheus\n')
+    fp.write('    uid: prometheus\n')
+    fp.write('    access: proxy\n')
+    fp.write(f'    url: http://cluster-leader:9091/{node_path}\n')
+
+    fp.write('  - name: Local Loki\n')
+    fp.write('    type: loki\n')
+    fp.write('    uid: loki\n')
+    fp.write('    access: proxy\n')
+    fp.write(f'    url: {logcli["LOKI_ADDR"]}\n')
+    fp.write(f'    basicAuth: true\n')
+    fp.write(f'    basicAuthUser: {logcli["LOKI_API_AUTH_USERNAME"]}\n')
+    fp.write('    secureJsonData:\n')
+    fp.write(f'      basicAuthPassword: {logcli["LOKI_API_AUTH_PASSWORD"]}\n')
+
+    fp.write('  - name: Alertmanager\n')
+    fp.write('    type: alertmanager\n')
+    fp.write('    url: http://cluster-leader:9093\n')
+    fp.write('    access: proxy\n')
+    fp.write('    jsonData:\n')
+    fp.write('      implementation: prometheus\n')
+    fp.write('      handleGrafanaManagedAlerts: true\n')

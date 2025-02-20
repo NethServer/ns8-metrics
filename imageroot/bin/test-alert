@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+name=fooAlert-$RANDOM
+url='http://localhost:9093/api/v2/alerts'
+bold=$(tput bold)
+normal=$(tput sgr0)
+
+generate_post_data() {
+  cat <<EOF
+[{
+  "status": "$1",
+  "labels": {
+    "alertname": "${name}",
+    "service": "my-service",
+    "severity":"critical",
+    "instance": "${name}.example.net",
+    "namespace": "foo-bar",
+    "label_costcentre": "FOO",
+    "node": "1"
+  },
+  "annotations": {
+    "summary": "Test alert!"
+  },
+  "generatorURL": "http://local-example-alert/$name"
+  $2
+  $3
+}]
+EOF
+}
+
+echo "${bold}Firing alert ${name} ${normal}"
+printf -v startsAt ',"startsAt" : "%s"' $(date --rfc-3339=seconds | sed 's/ /T/')
+POSTDATA=$(generate_post_data 'firing' "${startsAt}")
+curl -H "Content-Type: application/json" $url --data "$POSTDATA" --trace-ascii /dev/stdout
+echo -e "\n"
+
+echo "Sleeping to simulate the alert resolution"
+sleep 30
+
+echo "${bold}Sending resolved ${normal}"
+printf -v endsAt ',"endsAt" : "%s"' $(date --rfc-3339=seconds | sed 's/ /T/')
+POSTDATA=$(generate_post_data 'firing' "${startsAt}" "${endsAt}")
+curl $url -H "Content-Type: application/json" --data "$POSTDATA" --trace-ascii /dev/stdout
+echo -e "\n"

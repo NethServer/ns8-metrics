@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2025 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import os
+
+# Create the directory if it doesn't exist
+os.makedirs('rules.d', exist_ok=True)
+
+# Write the nodes.yml file
+with open('rules.d/nodes.yml', 'w') as f:
+  f.write('''groups:
+- name: Nodes
+  rules:
+  - alert: node_offline
+    expr: up == 0
+    for: 0m
+    labels:
+      severity: critical
+    annotations:
+      summary: Cluster node offline (instance {{ $labels.instance }})
+      description: "A cluster target has disappeared. An exporter might be crashed.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+''')
+
+# Write the memory.yml file
+with open('rules.d/memory.yml', 'w') as f:
+  f.write('''groups:
+- name: Memory
+  rules:
+  - alert: swap_full
+    expr: ((1 - (node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes)) * 100 > 80)
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: Host swap is filling up (instance {{ $labels.instance }})
+      description: "Swap is filling up (>80%)\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+
+  - alert: swap_notpresent
+    expr: node_memory_SwapTotal_bytes == 0
+    for: 0m
+    labels:
+      severity: critical
+    annotations:
+      summary: Swap not configured (instance {{ $labels.instance }})
+      description: "Swap is not configured on this host.\\n "
+''')
+
+
+  # Write the disk.yml file
+  with open('rules.d/disk.yml', 'w') as f:
+    f.write('''groups:
+  - name: Disk
+    rules:
+    - alert: disk_full
+      expr: (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: Host out of disk space (instance {{ $labels.instance }})
+        description: "Disk is almost full (< 10% left)\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+
+    - alert: md_failure
+      expr: (node_md_disks{state="failed"} > 0)
+      for: 2m
+      labels:
+        severity: critical
+      annotations:
+        summary: Host software RAID disk failure (instance {{ $labels.instance }})
+        description: "MD RAID array {{ $labels.device }} on {{ $labels.instance }} needs attention.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+  ''')
+
+    # Write the backup.yml file
+    with open('rules.d/backup.yml', 'w') as f:
+      f.write('''groups:
+    - name: Backup
+      rules:
+      - alert: backup_failed
+        expr: node_backup_status == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backup failed"
+          description: "The backup {name} ({id}) has failed."
+    ''')

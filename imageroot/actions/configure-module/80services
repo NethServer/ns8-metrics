@@ -1,0 +1,21 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2025 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# reload the configuration to apply new configuration
+if systemctl --user -q is-active prometheus.service; then
+    systemctl --user restart prometheus.service alertmanager.service
+fi
+
+if [ -n "$GRAFANA_PATH" ]; then
+    systemctl --user restart grafana.service
+else
+    systemctl --user stop grafana.service
+fi
+
+if systemctl --user -q is-active alertmanager.service; then
+    systemctl --user restart alertmanager.service
+fi
