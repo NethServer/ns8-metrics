@@ -1,0 +1,8 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Get prometheus configuration",
+    "$id": "http://nethserver.org/json-schema/task/output/prometheus/get-configuration",
+    "description": "Get prometheus configuration",
+    "examples": [],
+    "type": "object"
+}
