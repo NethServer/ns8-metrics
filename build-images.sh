@@ -8,36 +8,34 @@ images=()
 # The image will be pushed to GitHub container registry
 repobase="${REPOBASE:-ghcr.io/nethserver}"
 # Configure the image name
-reponame="prometheus"
+reponame="metrics"
 
 # Create a new empty container image
 container=$(buildah from scratch)
 
-# Reuse existing nodebuilder-prometheus container, to speed up builds
-if ! buildah containers --format "{{.ContainerName}}" | grep -q nodebuilder-prometheus; then
-    echo "Pulling NodeJS runtime..."
-    buildah from --name nodebuilder-prometheus -v "${PWD}:/usr/src:Z" docker.io/library/node:18.20.6-alpine
-fi
-
-echo "Build static UI files with node..."
-buildah run --env="NODE_OPTIONS=--openssl-legacy-provider" nodebuilder-prometheus sh -c "cd /usr/src/ui && yarn install && yarn build"
-
 # Add imageroot directory to the container image
 buildah add "${container}" imageroot /imageroot
-buildah add "${container}" ui/dist /ui
+buildah add "${container}" ui/ /ui
 # Setup the entrypoint, ask to reserve one TCP port with the label and set a rootless container
 buildah config --entrypoint=/ \
     --label="org.nethserver.authorizations=traefik@any:routeadm" \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.max-per-node=1" \
     --label='org.nethserver.flags=core_module' \
-    --label="org.nethserver.images=quay.io/prometheus/prometheus:v3.2.0 quay.io/prometheus/alertmanager:v0.28.0" \
+    --label="org.nethserver.images=quay.io/prometheus/prometheus:v3.2.0 quay.io/prometheus/alertmanager:v0.28.0 ghcr.io/nethserver/node-monitor:latest" \
     "${container}"
 # Commit the image
 buildah commit "${container}" "${repobase}/${reponame}"
 
 # Append the image URL to the images array
 images+=("${repobase}/${reponame}")
+
+# Build node-monitor container
+pushd node-monitor
+buildah build -t "${repobase}/metrics-node-monitor" Containerfile
+images+=("${repobase}/metrics-node-monitor")
+popd
+
 
 #
 # NOTICE:
