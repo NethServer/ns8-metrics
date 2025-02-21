@@ -30,7 +30,7 @@ Launch `configure-module`, by setting the following parameters:
 
 Example:
 
-    api-cli run module/grafana1/configure-module --data '{"prometheys_path": "lets_encrypt": false}'
+    api-cli run module/metrics1/configure-module --data '{"prometheys_path": "prometheus", "lets_encrypt": false}'
 
 ## Service Discovery
 
