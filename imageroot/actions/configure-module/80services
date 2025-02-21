@@ -12,4 +12,6 @@ fi
 
 if [ -n "$GRAFANA_PATH" ]; then
     systemctl --user restart grafana.service
+else
+    systemctl --user stop grafana.service
 fi

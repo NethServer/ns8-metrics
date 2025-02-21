@@ -33,10 +33,6 @@ Example:
 
     api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "lets_encrypt": false}'
 
-## Service Discovery
-
-
-
 ## Testing
 
 Test the module using the `test-module.sh` script:
