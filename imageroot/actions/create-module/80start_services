@@ -5,4 +5,4 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-systemctl --user enable --now prometheus.service alertmanager.service
+systemctl --user enable --now prometheus.service alertmanager.service alert-proxy.service

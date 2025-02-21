@@ -21,8 +21,6 @@ ExecStart=/usr/bin/podman run \
     --cgroups=no-conmon \
     --replace --name=%N \
     --network=host \
-    --volume=/run:/run:z \
-    --volume=/proc/meminfo:/proc/meminfo:z \
     ${ALERT_PROXY_IMAGE}
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/alert-proxy.ctr-id -t 10
 ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/alert-proxy.ctr-id

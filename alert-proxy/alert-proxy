@@ -11,6 +11,11 @@ import sys
 import os
 from aiohttp import web
 
+# Alarm states
+UNKNOWN = 'U'
+CLEAR = '0'
+CRITICAL = 'F'
+
 # Prepare runtime parameters
 node_name = 'node_' + os.environ['NODE_ID']
 auth_token = os.environ.get("NMON_ALERT_AUTH_TOKEN")
@@ -52,6 +57,9 @@ async def raise_alert(value, alert):
         return # do not send load alarm at all, just log it
     else:
         print('ALERT', svalue, alert, file=sys.stderr)
+    if not auth_token:
+        print("No auth token, alert not sent", file=sys.stderr)
+        return
     if alert_provider == 'nsent':
         await send_alert('https://my.nethesis.it/isa/alerts/store', value, alert)
     elif alert_provider == 'nscom':
