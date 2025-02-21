@@ -146,4 +146,4 @@ validate_and_generate_provider_configs(redis_client)
 clean_up_old_provider_configs(redis_client)
 
 # Generate alertmanager configuration
-generate_alertmanagr_config()
+generate_alertmanagr_config(redis_client)

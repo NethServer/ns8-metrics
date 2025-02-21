@@ -28,10 +28,11 @@ Launch `configure-module`, by setting the following parameters:
 - `prometheus_path`: path to access prometheus web UI, if left blank prometheus will be not exposed
 - `grafana_path`: path to access grafana web UI, if left blank grafana will be stopped; if enabled default credentials are `admin`/`admin`
 - `lets_encrypt`: boolean, if set to true traefik will request a valid Let's Encrypt certificate
+- `alert_mail`: email address to receive alerts
 
 Example:
 
-    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "lets_encrypt": false}'
+    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "lets_encrypt": false, "alert_mail": "alert@nethserver.org"}'
 
 ## Testing
 
