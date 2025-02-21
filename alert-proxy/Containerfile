@@ -1,4 +1,4 @@
 FROM python:3.13.2-alpine
 WORKDIR /
-COPY node-monitor .
+COPY alert-proxy .
 CMD [ "python", "./alert-proxy" ]

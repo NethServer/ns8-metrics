@@ -15,7 +15,7 @@ osubscription = rdb.hgetall('cluster/subscription')
 node_name = rdb.get(f'node/{os.environ["NODE_ID"]}/ui_name') or f'node/{os.environ["NODE_ID"]}'
 
 if osubscription:
-    agent.write_envfile("node-monitor.env", {
+    agent.write_envfile("alert-proxy.env", {
         "NMON_NODE_NAME": node_name,
         "NMON_ALERT_AUTH_TOKEN": osubscription["auth_token"],
         "NMON_ALERT_PROVIDER": osubscription["provider"],
@@ -24,5 +24,5 @@ if osubscription:
     })
 else:
     print(agent.SD_WARNING + "Could not retrieve subscription information from Redis", file=sys.stderr)
-    agent.write_envfile("node-monitor.env", {})
+    agent.write_envfile("alert-proxy.env", {})
 

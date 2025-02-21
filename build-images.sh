@@ -30,8 +30,8 @@ buildah commit "${container}" "${repobase}/${reponame}"
 # Append the image URL to the images array
 images+=("${repobase}/${reponame}")
 
-# Build node-monitor container
-pushd node-monitor
+# Build alert-proxy container
+pushd alert-proxy
 buildah build -t "${repobase}/alert-proxy" Containerfile
 images+=("${repobase}/alert-proxy")
 popd
