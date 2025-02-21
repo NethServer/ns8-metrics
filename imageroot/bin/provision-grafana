@@ -1,26 +1,10 @@
 #!/usr/bin/env python3
 
 #
-# Copyright (C) 2022 Nethesis S.r.l.
-# http://www.nethesis.it - nethserver@nethesis.it
-#
-# This script is part of NethServer.
-#
-# NethServer is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License,
-# or any later version.
-#
-# NethServer is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with NethServer.  If not, see COPYING.
+# Copyright (C) 2025 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-import os
 import agent
 
 ##
@@ -28,10 +12,10 @@ import agent
 ## probably prometheus will be instally later if not found yet
 ##
 
-# Read prometheus config from local node
+# Read prometheus leader node
 rdb = agent.redis_connect(use_replica=True)
-default_instance = agent.resolve_agent_id("prometheus@cluster")  or "module/prometheus1"
-node_path = rdb.hget(f'{default_instance}/environment', 'PROMETHEUS_PATH') or "/prometheus"
+default_instance = agent.resolve_agent_id("prometheus@cluster")  or "module/metrics1"
+node_path = rdb.hget(f'{default_instance}/environment', 'PROMETHEUS_PATH') or ""
 
 # Read loki config from Redis
 loki = agent.resolve_agent_id("loki@cluster")
@@ -45,7 +29,7 @@ with open('local.yml', 'w') as fp:
     fp.write('    type: prometheus\n')
     fp.write('    uid: prometheus\n')
     fp.write('    access: proxy\n')
-    fp.write(f'    url: http://cluster-leader/{node_path}\n')
+    fp.write(f'    url: http://cluster-leader:9091/{node_path}\n')
 
     fp.write('  - name: Local Loki\n')
     fp.write('    type: loki\n')

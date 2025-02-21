@@ -15,3 +15,7 @@ if [ -n "$GRAFANA_PATH" ]; then
 else
     systemctl --user stop grafana.service
 fi
+
+if systemctl --user -q is-active alertmanager.service; then
+    systemctl --user restart alertmanager.service
+fi

@@ -14,6 +14,6 @@ if os.path.exists('config.json'):
     with open('config.json', 'r') as f:
         config = json.load(f)
 else:
-    config = {"prometheus_path": "", "lets_encrypt": False}
+    config = {"prometheus_path": "", "grafana_path": False, "lets_encrypt": False, "alert_mail": False}
 
 json.dump(config, fp=sys.stdout)
