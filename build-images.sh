@@ -22,7 +22,7 @@ buildah config --entrypoint=/ \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.max-per-node=1" \
     --label='org.nethserver.flags=core_module' \
-    --label="org.nethserver.images=quay.io/prometheus/prometheus:v3.2.0 quay.io/prometheus/alertmanager:v0.28.0 ghcr.io/nethserver/metrics-node-monitor:latest" \
+    --label="org.nethserver.images=quay.io/prometheus/prometheus:v3.2.0 quay.io/prometheus/alertmanager:v0.28.0 ghcr.io/nethserver/alert-proxy:latest" \
     "${container}"
 # Commit the image
 buildah commit "${container}" "${repobase}/${reponame}"
@@ -32,8 +32,8 @@ images+=("${repobase}/${reponame}")
 
 # Build node-monitor container
 pushd node-monitor
-buildah build -t "${repobase}/metrics-node-monitor" Containerfile
-images+=("${repobase}/metrics-node-monitor")
+buildah build -t "${repobase}/alert-proxy" Containerfile
+images+=("${repobase}/alert-proxy")
 popd
 
 
