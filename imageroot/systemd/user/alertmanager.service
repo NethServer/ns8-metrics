@@ -12,7 +12,6 @@ EnvironmentFile=%S/state/environment
 WorkingDirectory=%S/state
 Restart=always
 ExecStartPre=/bin/rm -f %t/alertmanager.pid %t/alertmanager.ctr-id
-ExecStartPre=/usr/bin/mkdir -vp %S/state/alertmanager.d
 ExecStart=/usr/bin/podman run \
     --detach \
     --conmon-pidfile=%t/alertmanager.pid \
