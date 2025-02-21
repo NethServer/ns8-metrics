@@ -107,7 +107,7 @@ def generate_alertmanagr_config(redis_client):
     if 'host' in smtp and smtp['host']:
         smtp_config = {
             'smtp_from': 'alertmanager@' + smtp['host'],
-            'smtp_smarthost': smtp['host'] + ':' + smtp['port'],
+            'smtp_smarthost': f"{smtp['host']}:{smtp['port']}",
             'smtp_auth_username': smtp['username'],
             'smtp_auth_password': smtp['password'],
             'smtp_require_tls': smtp['encrypt_smtp'] != 'none',
