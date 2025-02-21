@@ -6,6 +6,6 @@
 #
 
 # reload the subscription configuration
-if ! systemctl --user -q is-active alert-proxy.service; then
+if systemctl --user -q is-active alert-proxy.service; then
     systemctl --user restart alert-proxy.service
 fi

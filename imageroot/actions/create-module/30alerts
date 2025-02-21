@@ -38,6 +38,15 @@ with open('rules.d/memory.yml', 'w') as f:
     annotations:
       summary: Host swap is filling up (instance {{ $labels.instance }})
       description: "Swap is filling up (>80%)\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+
+  - alert: swap_notpresent
+    expr: node_memory_SwapTotal_bytes == 0
+    for: 0m
+    labels:
+      severity: critical
+    annotations:
+      summary: Swap not configured (instance {{ $labels.instance }})
+      description: "Swap is not configured on this host.\\n "
 ''')
 
 
@@ -62,13 +71,13 @@ with open('rules.d/memory.yml', 'w') as f:
         severity: critical
       annotations:
         summary: Host software RAID disk failure (instance {{ $labels.instance }})
-        description: "MD RAID array {{ $labels.device }} on {{ $labels.instance }} needs attention.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+        description: "MD RAID array {{ $labels.device }} on {{ $labels.instance }} needs attention.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
   ''')
 
     # Write the backup.yml file
     with open('rules.d/backup.yml', 'w') as f:
       f.write('''groups:
-    - name: backup-alert-rules
+    - name: Backup
       rules:
       - alert: backup_failed
         expr: node_backup_status == 0

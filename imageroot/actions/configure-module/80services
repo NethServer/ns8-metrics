@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-# reload the configuration to scrape new ndes
-if ! systemctl --user -q is-active prometheus.service; then
+# reload the configuration to apply new configuration
+if systemctl --user -q is-active prometheus.service; then
     systemctl --user restart prometheus.service
 fi
