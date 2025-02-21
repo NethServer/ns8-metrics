@@ -64,3 +64,18 @@ with open('rules.d/memory.yml', 'w') as f:
         summary: Host software RAID disk failure (instance {{ $labels.instance }})
         description: "MD RAID array {{ $labels.device }} on {{ $labels.instance }} needs attention.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
   ''')
+
+    # Write the backup.yml file
+    with open('rules.d/backup.yml', 'w') as f:
+      f.write('''groups:
+    - name: backup-alert-rules
+      rules:
+      - alert: backup_failed
+        expr: node_backup_status == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backup failed"
+          description: "The backup {name} ({id}) has failed."
+    ''')

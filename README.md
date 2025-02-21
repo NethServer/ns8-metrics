@@ -25,12 +25,12 @@ The module is automatically installed by the cluster initialization script.
 ## Configure
 
 Launch `configure-module`, by setting the following parameters:
-- `prometheus_path`: path to access prometheus web UI
+- `prometheus_path`: path to access prometheus web UI, if left blank prometheus will be not exposed
 - `lets_encrypt`: boolean, if set to true traefik will request a valid Let's Encrypt certificate
 
 Example:
 
-    api-cli run module/metrics1/configure-module --data '{"prometheys_path": "prometheus", "lets_encrypt": false}'
+    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "lets_encrypt": false}'
 
 ## Service Discovery
 
