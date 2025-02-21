@@ -9,3 +9,7 @@
 if systemctl --user -q is-active prometheus.service; then
     systemctl --user restart prometheus.service
 fi
+
+if [ -n "$GRAFANA_PATH" ]; then
+    systemctl --user restart grafana.service
+fi
