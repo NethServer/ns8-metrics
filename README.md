@@ -18,21 +18,19 @@ Behavior:
 - Alertmanager listens on well-known port 9093
 
 
-TODO:
-- stop proxy
-- restart on add-node
-- restart on remove-node
-- install and start on leader promotion
-- stop on worker change
-- stop and start http nethesis proxy on subscription-changed event
-
 ## Install
 
 The module is automatically installed by the cluster initialization script.
 
 ## Configure
 
-TODO
+Launch `configure-module`, by setting the following parameters:
+- `prometheus_path`: path to access prometheus web UI
+- `lets_encrypt`: boolean, if set to true traefik will request a valid Let's Encrypt certificate
+
+Example:
+
+    api-cli run module/grafana1/configure-module --data '{"prometheys_path": "lets_encrypt": false}'
 
 ## Service Discovery
 
