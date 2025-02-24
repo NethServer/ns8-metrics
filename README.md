@@ -7,6 +7,7 @@ It is composed by the following services:
 
 - [Prometheus](https://prometheus.io/)
 - [Alertmanager](https://prometheus.io/docs/alerting/alertmanager/)
+- [alert-proxy](alert-proxy/README.md)
 
 Behavior:
 
