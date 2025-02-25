@@ -7,6 +7,7 @@ It is composed by the following services:
 
 - [Prometheus](https://prometheus.io/)
 - [Alertmanager](https://prometheus.io/docs/alerting/alertmanager/)
+- [Grafana](https://grafana.com/)
 - [alert-proxy](alert-proxy/README.md)
 
 Behavior:
@@ -17,6 +18,7 @@ Behavior:
 - Prometheus listens on well-known port 9091 (standard port is 9090, but it has been changed to avoid conflicts with Cockpit)
 - Alertmanager listens on well-known port 9093
 - alert-proxy listens on well-known port 9095
+- Grafana is disabled by default, if a Traefik route is configured Grafana will be run on the well-known port 3000
 
 The configuration for Prometheus and Alertmanager is created when Prometheus service is restarted.
 The module is restarted when a new node is added or removed from the cluster.
