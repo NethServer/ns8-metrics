@@ -44,10 +44,11 @@ Launch `configure-module`, by setting the following parameters:
 - `lets_encrypt`: boolean, if set to true traefik will request a valid Let's Encrypt certificate
 - `mail_to`: list of email addresses to receive alerts, this requires that mail notifications are enabled at cluster level
 - `mail_from`: email address used to send alerts, if left blank the default value is `alertmanager@<node_fqdn>`
+- `mail_template`: name of the template to use to send alerts, if left blank the default template is used
 
 Example:
 
-    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "lets_encrypt": false, "mail_to": ["alert@nethserver.org"]}'
+    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "lets_encrypt": false, "mail_to": ["alert@nethserver.org"], "mail_from": "no-reply@nethserver.org", "mail_template": ""}'
 
 You can send a test alert to verify the mail configuration:
 
