@@ -7,6 +7,7 @@
 
 import asyncio
 import aiohttp
+import json
 import sys
 import os
 from aiohttp import web
@@ -69,6 +70,7 @@ async def handle_post_request(request):
     # Convert alertsmanager alerts into my alert format
     try:
         data = await request.json()
+        print("Received alert:", json.dumps(data), file=sys.stderr)
         alerts = data.get('alerts', [])
         for alert in alerts:
             status = alert.get('status')
