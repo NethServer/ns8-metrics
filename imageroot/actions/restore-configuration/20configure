@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2025 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import os
+import sys
+import json
+
+import agent
+import agent.tasks
+
+request = json.load(sys.stdin)
+
+mid = os.environ['MODULE_ID']
+settings = request.get('settings')
+custom_alerts = request.get('custom_alerts')
+custom_templates = request.get('custom_templates')
+
+rdb = agent.redis_connect(privileged=True)
+if settings:
+    print(f'writing to module/{mid}/settings')
+    rdb.hset(f'module/{mid}/settings', mapping=settings)
+if custom_alerts:
+    rdb.hset(f'module/{mid}/custom_alerts', mapping=custom_alerts)
+if custom_templates:
+    rdb.hset(f'module/{mid}/custom_templates', mapping=custom_templates)
+
+prometheus_path = settings.get('prometheus_path')
+lets_encrypt = settings.get('lets_encrypt') == '1'
+grafana_path = settings.get('grafana_path')
+
+# Configure Traefik to route prometheus path requests to the prometheus service
+if prometheus_path:
+    agent.set_env("PROMETHEUS_PATH", prometheus_path)
+    response = agent.tasks.run(
+        agent_id=agent.resolve_agent_id('traefik@node'),
+        action='set-route',
+        data={
+            'instance': os.environ['MODULE_ID'] + '_prometheus',
+            'url': 'http://127.0.0.1:9091',
+            'http2https': True,
+            'lets_encrypt': lets_encrypt,
+            'path': f'/{prometheus_path}',
+        },
+    )
+
+    # Check if traefik configuration has been successfull
+    agent.assert_exp(response['exit_code'] == 0)
+else:
+    # Remove traefik route
+    agent.set_env("PROMETHEUS_PATH", "")
+    response = agent.tasks.run(
+        agent_id=agent.resolve_agent_id('traefik@node'),
+        action='delete-route',
+        data={
+            'instance': os.environ['MODULE_ID'] + '_prometheus'
+        },
+    )
+
+# Configure Traefik to route grafana path requests to the grafana service
+if grafana_path:
+    agent.set_env("GRAFANA_PATH", grafana_path)
+    response = agent.tasks.run(
+        agent_id=agent.resolve_agent_id('traefik@node'),
+        action='set-route',
+        data={
+            'instance': os.environ['MODULE_ID'] + '_grafana',
+            'url': 'http://127.0.0.1:3000',
+            'http2https': True,
+            'lets_encrypt': lets_encrypt,
+            'path': f'/{grafana_path}',
+        },
+    )
+else:
+    # Remove traefik route
+    agent.set_env("GRAFANA_PATH", "")
+    response = agent.tasks.run(
+        agent_id=agent.resolve_agent_id('traefik@node'),
+        action='delete-route',
+        data={
+            'instance': os.environ['MODULE_ID'] + '_grafana'
+        },
+    )
