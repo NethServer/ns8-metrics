@@ -20,3 +20,7 @@ The service relies on several environment variables for its configuration:
 ## Endpoints
 - `GET /`: Health check endpoint. Returns "OK" if the service is running.
 - `POST /`: Endpoint to receive alerts. Expects a JSON payload with alerts.
+  When a POST request is received:
+    - it assumes it's an alertmanager alert in JSON format
+    - it parses the alert to Nethesis internal format
+    - if the machine has a valid subscription, it sends the alert to my.nethesis.it or my.nethserver.com
