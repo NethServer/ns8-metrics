@@ -77,8 +77,18 @@ async def handle_post_request(request):
             labels = alert.get('labels', {})
             node_id = labels.get('node', 'unknown')
             # Remap to my alert id format
-            alert_name = labels.get('alertname', 'unknown').replace('_', ':')
-            alert_id = f"{alert_name}:{node_id}"
+            alert_name = labels.get('alertname', 'unknown')
+            if alert_name == 'disk_full':
+                mountpoint = labels.get('mountpoint')
+                if mountpoint:
+                    dir = os.path.basename(mountpoint)
+                    alert_id = f'disk-full:{dir}:node:{node_id}'
+                else:
+                    alert_id = f'disk_:{labels.get('device')}:node:{node_id}'
+            elif alert_name == 'swap_full':
+                alert_id = f'swap:node:{node_id}'
+            else:
+                alert_id = f"{alert_name.replace('_', ':')}:{node_id}"
             if status == 'firing':
                 value = CRITICAL
             elif status == 'resolved':
