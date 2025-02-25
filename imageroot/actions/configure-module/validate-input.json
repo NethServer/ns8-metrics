@@ -17,9 +17,7 @@
     "required": [
         "prometheus_path",
         "grafana_path",
-        "lets_encrypt",
-        "mail_to",
-        "mail_from"
+        "lets_encrypt"
     ],
     "properties": {
         "lets_encrypt": {
