@@ -97,15 +97,19 @@ def clean_up_old_provider_configs(redis_client):
             if entry.is_file() and entry.name.startswith('node_') and entry.name not in nodes:
                 os.remove(entry.path)
 
-def read_config():
-    try:
-        with open('config.json', 'r') as f:
-            return json.load(f)
-    except:
-        return {}
+def read_config(redis_client):
+    if redis_client.exists(f'module/{os.environ["MODULE_ID"]}/settings'):
+        config = redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/settings')
+        if config.get("lets_encrypt") == "1":
+            config["lets_encrypt"] = True
+        else:
+            config["lets_encrypt"] = False
+    else:
+        config = {"prometheus_path": None, "grafana_path": None, "lets_encrypt": False, "mail_to": [], "mail_from": None, "mail_template": None}
+    return config
 
 def generate_alertmanagr_config(redis_client):
-    config = read_config()
+    config = read_config(redis_client)
     smtp = agent.get_smarthost_settings(redis_client)
     if 'host' in smtp and smtp['host']:
         smtp_config = {
@@ -143,6 +147,34 @@ def generate_alertmanagr_config(redis_client):
     with open('alertmanager.yml', 'w') as f:
         yaml.safe_dump(json.loads(json.dumps(alert_config)), f, default_flow_style=False, sort_keys=False)
 
+def generate_custom_alertmanager_rules(redis_client):
+    rules = []
+    for key in redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/custom_alerts'):
+        alert = redis_client.hget(f'module/{os.environ["MODULE_ID"]}/custom_alerts', key)
+        if alert:
+            rules.append(f"{alert}")
+    if rules:
+        with open('rules.d/custom.yml', 'w') as f:
+            f.write("groups:\n- name: Custom\n  rules:\n")
+            for rule in rules:
+                f.write("  - " + rule + "\n")
+    else:
+        try:
+            os.remove('rules.d/custom.yml')
+        except:
+            pass
+
+def generate_custom_alertmanager_templates(redis_client):
+    # Search for all custom_*.yml files, delete the ones that are not in the nodes list
+    with os.scandir('templates.d') as it:
+        for entry in it:
+            if entry.is_file() and entry.name.startswith('custom_') and entry.name not in nodes:
+                os.remove(entry.path)
+    for key in redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/custom_templates'):
+        template = redis_client.hget(f'module/{os.environ["MODULE_ID"]}/custom_templates', key)
+        if template:
+            with open(f'templates.d/custom_{key}.yml', 'w') as f:
+                f.write(template + '\n')
 
 # connect to client and fetch providers for prometheus
 redis_client = agent.redis_connect(use_replica=True)
@@ -154,3 +186,5 @@ clean_up_old_provider_configs(redis_client)
 
 # Generate alertmanager configuration
 generate_alertmanagr_config(redis_client)
+generate_custom_alertmanager_rules(redis_client)
+generate_custom_alertmanager_templates(redis_client)

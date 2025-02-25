@@ -13,8 +13,9 @@ import agent
 import agent.tasks
 
 def save_config(request):
-    with open("config.json", 'w') as config_file:
-        json.dump(request, config_file, indent=4)
+    rdb = agent.redis_connect(privileged=True)
+    request['lets_encrypt'] = '1' if request.get('lets_encrypt') else '0'
+    rdb.hset(f'module/{os.environ["MODULE_ID"]}/settings', mapping={k: str(v) for k, v in request.items()})
 
 request = json.load(sys.stdin)
 

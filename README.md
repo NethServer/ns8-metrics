@@ -63,15 +63,24 @@ A very curated list of rules can be found at [Awesome Prometheus alerts](https:/
 
 To add a rule, enter the module, then create a rule file and reload the module:
 ```
-runagent -m metrics1
-cat > rules.d/custom.rules <<EOF
-<your rules here>
-EOF
+echo '<alert_definition>' | redis-cli -x hset module/metrics1/custom_alerts <alert_id>
 ```
 
-Restart the service:
+Example:
 ```
-systemctl --user restart alertmanager
+echo 'alert: HostMemoryUnderMemoryPressure
+    expr: (rate(node_vmstat_pgmajfault[5m]) > 1000)
+    for: 0m
+    labels:
+      severity: warning
+    annotations:
+      summary: Host memory under memory pressure (instance {{ $labels.instance }})
+      description: "The node is under heavy memory pressure. High rate of loading memory pages from disk.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"' | redis-cli -x hset module/metrics1/custom_alerts mempressure
+```
+
+Apply the changes:
+```
+runagent -m metrics1 systemctl --user restart prometheus alertmanager
 ```
 
 ### Customize alert mail template
@@ -82,10 +91,12 @@ First, create a template.
 Make sure to not change `custom_mail_subject` and `custom_mail_html` names, as they are used by the module to render the mail.
 Execute the following commands:
 ```
-runagent -m metrics1
+echo '<template>' | redis-cli -x hset module/metrics1/custom_templates <template_name>
+```
 
-cat > templates.d/mail.tmpl <<EOF
-{{ define "custom_mail_subject" }}Alert on {{ range .Alerts.Firing }}{{ .Labels.instance }} {{ end }}{{ end }}
+Example:
+```
+echo '{{ define "custom_mail_subject" }}Alert on {{ range .Alerts.Firing }}{{ .Labels.instance }} {{ end }}{{ end }}
 {{ define "custom_mail_html" }}
 <html>
 <head>
@@ -108,10 +119,12 @@ cat > templates.d/mail.tmpl <<EOF
 </p>
 {{ end }}
 </body></html>
-{{ end }}
-EOF
+{{ end }}' | redis-cli -x hset module/metrics2/custom_templates mail
+```
 
-exit
+Apply the changes:
+```
+runagent -m metrics1 systemctl --user restart prometheus alertmanager
 ```
 
 Then, configure the module to use the new template:
