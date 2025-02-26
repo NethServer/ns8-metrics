@@ -1,5 +1,10 @@
 #!/bin/bash
 
+#
+# Copyright (C) 2025 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
 # Terminate on error
 set -e
 
