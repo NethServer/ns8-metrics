@@ -13,6 +13,7 @@ Restart=always
 ExecStartPre=/bin/rm -f %t/prometheus.pid %t/prometheus.ctr-id
 ExecStartPre=/usr/bin/mkdir -vp %S/state/prometheus.d
 ExecStartPre=/usr/local/bin/runagent reload_configuration
+ExecStartPre=/usr/local/bin/runagent write-alert-proxy-envfile
 ExecStart=/usr/bin/podman run \
     --detach \
     --conmon-pidfile=%t/prometheus.pid \
