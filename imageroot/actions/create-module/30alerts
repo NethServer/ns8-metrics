@@ -12,7 +12,7 @@ os.makedirs('rules.d', exist_ok=True)
 
 # Write the nodes.yml file
 with open('rules.d/nodes.yml', 'w') as f:
-  f.write('''groups:
+    f.write('''groups:
 - name: Nodes
   rules:
   - alert: node_offline
@@ -27,7 +27,7 @@ with open('rules.d/nodes.yml', 'w') as f:
 
 # Write the memory.yml file
 with open('rules.d/memory.yml', 'w') as f:
-  f.write('''groups:
+    f.write('''groups:
 - name: Memory
   rules:
   - alert: swap_full
@@ -50,34 +50,34 @@ with open('rules.d/memory.yml', 'w') as f:
 ''')
 
 
-  # Write the disk.yml file
-  with open('rules.d/disk.yml', 'w') as f:
+# Write the disk.yml file
+with open('rules.d/disk.yml', 'w') as f:
     f.write('''groups:
-  - name: Disk
-    rules:
-    - alert: disk_full
-      expr: (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
-      for: 2m
-      labels:
-        severity: warning
-      annotations:
-        summary: Host out of disk space (instance {{ $labels.instance }})
-        description: "Disk is almost full (< 10% left)\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+- name: Disk
+  rules:
+  - alert: disk_full
+    expr: (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: Host out of disk space (instance {{ $labels.instance }})
+      description: "Disk is almost full (< 10% left)\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
 
-    - alert: md_failure
-      expr: (node_md_disks{state="failed"} > 0)
-      for: 2m
-      labels:
-        severity: critical
-      annotations:
-        summary: Host software RAID disk failure (instance {{ $labels.instance }})
-        description: "MD RAID array {{ $labels.device }} on {{ $labels.instance }} needs attention.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
-  ''')
+  - alert: md_failure
+    expr: (node_md_disks{state="failed"} > 0)
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: Host software RAID disk failure (instance {{ $labels.instance }})
+      description: "MD RAID array {{ $labels.device }} on {{ $labels.instance }} needs attention.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+''')
 
-    # Write the backup.yml file
-    with open('rules.d/backup.yml', 'w') as f:
-      f.write('''groups:
-    - name: Backup
+# Write the backup.yml file
+with open('rules.d/backup.yml', 'w') as f:
+    f.write('''groups:
+  - name: Backup
       rules:
       - alert: backup_failed
         expr: node_backup_status == 0
@@ -87,4 +87,4 @@ with open('rules.d/memory.yml', 'w') as f:
         annotations:
           summary: "Backup failed"
           description: "The backup {name} ({id}) has failed."
-    ''')
+''')
