@@ -14,7 +14,7 @@ Behavior:
 
 - there is only one instance of the module inside all the cluster, the instance runs only on the leader node
 - it automatically monitors all cluster nodes
-- if a leader node becomes a worker, the module is automatically stopped on the worker node
+- if a leader node becomes a worker, the module is automatically removed on the worker node
 - Prometheus listens on well-known port 9091 (standard port is 9090, but it has been changed to avoid conflicts with Cockpit)
 - Alertmanager listens on well-known port 9093
 - alert-proxy listens on well-known port 9095
