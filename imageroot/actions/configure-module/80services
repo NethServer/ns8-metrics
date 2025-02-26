@@ -6,16 +6,10 @@
 #
 
 # reload the configuration to apply new configuration
-if systemctl --user -q is-active prometheus.service; then
-    systemctl --user restart prometheus.service alertmanager.service
-fi
+systemctl --user restart prometheus.service alertmanager.service alert-proxy.service
 
 if [ -n "$GRAFANA_PATH" ]; then
     systemctl --user restart grafana.service
 else
     systemctl --user stop grafana.service
-fi
-
-if systemctl --user -q is-active alertmanager.service; then
-    systemctl --user restart alertmanager.service
 fi
