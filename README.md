@@ -56,6 +56,15 @@ You can send a test alert to verify the mail configuration:
 
     runagent -m metrics1 test-alert
 
+Configuration files are saved inside the state directory. The most important files and directory are:
+
+- prometheus.yml: Prometheus configuration
+  - prometheus.d: directory containing node configuration files
+  - rules.d: directory containing custom alert rules
+- alertmanager.yml: Alertmanager configuration
+  - templates.d: directory containing custom alert templates
+- local.yml: Grafana configuration, if enabled
+
 ### Customimze alert rules
 
 You can add custom alert rules by creating a custom rule file in the `rules.d` directory.
