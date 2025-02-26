@@ -7,14 +7,12 @@
         {
             "prometheus_path": null,
             "grafana_path": null,
-            "lets_encrypt": false,
             "mail_to": [],
             "mail_from": null
         },
         {
             "prometheus_path": "prometheus",
             "grafana_path": "grafana",
-            "lets_encrypt": true,
             "mail_to": [ "alert@nethserver.org" ],
             "mail_from": "no-reply@nethserver.org"
         }

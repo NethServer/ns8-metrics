@@ -14,14 +14,12 @@ import agent.tasks
 
 def save_config(request):
     rdb = agent.redis_connect(privileged=True)
-    request['lets_encrypt'] = '1' if request.get('lets_encrypt') else '0'
     rdb.hset(f'module/{os.environ["MODULE_ID"]}/settings', mapping={k: str(v) for k, v in request.items()})
 
 request = json.load(sys.stdin)
 
 prometheus_path = request.get('prometheus_path')
 grafana_path = request.get('grafana_path')
-lets_encrypt = request.get('lets_encrypt', False)
 
 save_config(request)
 
@@ -35,13 +33,9 @@ if prometheus_path:
             'instance': os.environ['MODULE_ID'] + '_prometheus',
             'url': 'http://127.0.0.1:9091',
             'http2https': True,
-            'lets_encrypt': lets_encrypt,
             'path': f'/{prometheus_path}',
         },
     )
-
-    # Check if traefik configuration has been successfull
-    agent.assert_exp(response['exit_code'] == 0)
 else:
     # Remove traefik route
     agent.set_env("PROMETHEUS_PATH", "")
@@ -63,7 +57,6 @@ if grafana_path:
             'instance': os.environ['MODULE_ID'] + '_grafana',
             'url': 'http://127.0.0.1:3000',
             'http2https': True,
-            'lets_encrypt': lets_encrypt,
             'path': f'/{grafana_path}',
         },
     )

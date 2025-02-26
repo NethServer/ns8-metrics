@@ -29,7 +29,6 @@ if custom_templates:
     rdb.hset(f'module/{mid}/custom_templates', mapping=custom_templates)
 
 prometheus_path = settings.get('prometheus_path')
-lets_encrypt = settings.get('lets_encrypt') == '1'
 grafana_path = settings.get('grafana_path')
 
 # Configure Traefik to route prometheus path requests to the prometheus service
@@ -42,7 +41,6 @@ if prometheus_path:
             'instance': os.environ['MODULE_ID'] + '_prometheus',
             'url': 'http://127.0.0.1:9091',
             'http2https': True,
-            'lets_encrypt': lets_encrypt,
             'path': f'/{prometheus_path}',
         },
     )
@@ -70,7 +68,6 @@ if grafana_path:
             'instance': os.environ['MODULE_ID'] + '_grafana',
             'url': 'http://127.0.0.1:3000',
             'http2https': True,
-            'lets_encrypt': lets_encrypt,
             'path': f'/{grafana_path}',
         },
     )

@@ -15,11 +15,7 @@ rdb = agent.redis_connect(use_replica=True)
 # Read config from Redis
 if rdb.exists(f'module/{os.environ["MODULE_ID"]}/settings'):
     config = rdb.hgetall(f'module/{os.environ["MODULE_ID"]}/settings')
-    if config.get("lets_encrypt") == "1":
-        config["lets_encrypt"] = True
-    else:
-        config["lets_encrypt"] = False
 else:
-    config = {"prometheus_path": None, "grafana_path": None, "lets_encrypt": False, "mail_to": [], "mail_from": None, "mail_template": None}
+    config = {"prometheus_path": None, "grafana_path": None,  "mail_to": [], "mail_from": None, "mail_template": None}
 
 json.dump(config, fp=sys.stdout)

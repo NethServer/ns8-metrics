@@ -7,7 +7,6 @@
         {
             "prometheus_path": "prometheus",
             "grafana_path": "grafana",
-            "lets_encrypt": true,
             "mail_to": [ "alert@nethserver.org" ],
             "mail_from": "no-reply@nethserver.org",
             "mail_template": "custom_mail"
@@ -16,15 +15,9 @@
     "type": "object",
     "required": [
         "prometheus_path",
-        "grafana_path",
-        "lets_encrypt"
+        "grafana_path"
     ],
     "properties": {
-        "lets_encrypt": {
-            "type": "boolean",
-            "title": "Let's Encrypt certificate",
-            "description": "Request a valid Let's Encrypt certificate."
-        },
         "prometheus_path": {
             "type": "string",
             "description": "Path to access prometheus interface, like 'prometheus'. Prometheus will be available at https://<hostname>/<prometheus_path>. If empty, prometheus will not be accessible.",
