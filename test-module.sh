@@ -36,7 +36,7 @@ cd /home/pwuser/ns8-module
 exec robot -v NODE_ADDR:${LEADER_NODE} \
     -v IMAGE_URL:${IMAGE_URL} \
     -v SSH_KEYFILE:/home/pwuser/ns8-key \
-    --name loki \
+    --name metrics \
     --skiponfailure unstable \
     -d ~/outputs ${@} /home/pwuser/ns8-module/tests/
 EOF
