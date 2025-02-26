@@ -25,7 +25,7 @@ Check if alert-proxy is running
     Should Be Equal As Integers    ${rc}  0
 
 Check if t can be configured
-    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "lets_encrypt": false}'
+    ${rc} =    Execute Command    api-cli run module/${module_id}/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana"}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
 
