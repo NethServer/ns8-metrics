@@ -43,14 +43,13 @@ The module is automatically installed by the cluster initialization script.
 Launch `configure-module`, by setting the following parameters:
 - `prometheus_path`: path to access Prometheus web UI, if left blank Prometheus will be not exposed
 - `grafana_path`: path to access Grafana web UI, if left blank grafana will be stopped; if enabled default credentials are `admin`/`admin`
-- `lets_encrypt`: boolean, if set to true traefik will request a valid Let's Encrypt certificate
 - `mail_to`: list of email addresses to receive alerts, this requires that mail notifications are enabled at cluster level
 - `mail_from`: email address used to send alerts, if left blank the default value is `alertmanager@<node_fqdn>`
 - `mail_template`: name of the template to use to send alerts, if left blank the default template is used
 
 Example:
 
-    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "lets_encrypt": false, "mail_to": ["alert@nethserver.org"], "mail_from": "no-reply@nethserver.org", "mail_template": ""}'
+    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_to": ["alert@nethserver.org"], "mail_from": "no-reply@nethserver.org", "mail_template": ""}'
 
 You can send a test alert to verify the mail configuration:
 
@@ -67,7 +66,9 @@ Configuration files are saved inside the state directory. The most important fil
 
 ### Customimze alert rules
 
-You can add custom alert rules by creating a custom rule file in the `rules.d` directory.
+All alert rules are defined in the `rules.d` directory. Files can't be modified directly and will be overwritten on module update.
+
+You can create a custom rule by adding the configuration to redis.
 A very curated list of rules can be found at [Awesome Prometheus alerts](https://samber.github.io/awesome-prometheus-alerts/).
 
 To add a rule, enter the module, then create a rule file and reload the module:
@@ -138,7 +139,7 @@ runagent -m metrics1 systemctl --user restart prometheus alertmanager
 
 Then, configure the module to use the new template:
 ```
-api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "lets_encrypt": false, "mail_from": "no-reply@nethserver.org", "mail_to": ["alert@nethserver.org"], "mail_template": "custom_mail_html"}'
+api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_from": "no-reply@nethserver.org", "mail_to": ["alert@nethserver.org"], "mail_template": "custom_mail_html"}'
 ```
 
 You can test the template rendering using the following command:
