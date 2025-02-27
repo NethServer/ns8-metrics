@@ -44,9 +44,6 @@ if prometheus_path:
             'path': f'/{prometheus_path}',
         },
     )
-
-    # Check if traefik configuration has been successfull
-    agent.assert_exp(response['exit_code'] == 0)
 else:
     # Remove traefik route
     agent.set_env("PROMETHEUS_PATH", "")
