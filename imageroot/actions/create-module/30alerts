@@ -77,14 +77,14 @@ with open('rules.d/disk.yml', 'w') as f:
 # Write the backup.yml file
 with open('rules.d/backup.yml', 'w') as f:
     f.write('''groups:
-  - name: Backup
-      rules:
-      - alert: backup_failed
-        expr: node_backup_status == 0
-        for: 0m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Backup failed"
-          description: "The backup {name} ({id}) has failed."
+- name: Backup
+  rules:
+  - alert: backup_failed
+    expr: node_backup_status == 0
+    for: 0m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Backup failed"
+      description: "The backup {name} ({id}) has failed."
 ''')
