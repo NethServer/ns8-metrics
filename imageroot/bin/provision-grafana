@@ -5,22 +5,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+import os
 import agent
-
-##
-## we need to made a first discover with default value, 
-## probably prometheus will be instally later if not found yet
-##
 
 # Read prometheus leader node
 rdb = agent.redis_connect(use_replica=True)
-default_instance = agent.resolve_agent_id("prometheus@cluster")  or "module/metrics1"
-node_path = rdb.hget(f'{default_instance}/environment', 'PROMETHEUS_PATH') or ""
 
 # Read loki config from Redis
 loki = agent.resolve_agent_id("loki@cluster")
 logcli = rdb.hgetall(f'{loki}/environment')
 logcli["LOKI_ADDR"] = 'http://'+logcli["LOKI_ADDR"]+':'+logcli["LOKI_HTTP_PORT"]
+
+prometheus_path = os.getenv('PROMETHEUS_PATH', '')
 
 with open('local.yml', 'w') as fp:
     fp.write("apiVersion: 1\n")
@@ -29,7 +25,7 @@ with open('local.yml', 'w') as fp:
     fp.write('    type: prometheus\n')
     fp.write('    uid: prometheus\n')
     fp.write('    access: proxy\n')
-    fp.write(f'    url: http://cluster-leader:9091/{node_path}\n')
+    fp.write(f'    url: http://cluster-leader:9091/{prometheus_path}\n')
 
     fp.write('  - name: Local Loki\n')
     fp.write('    type: loki\n')
