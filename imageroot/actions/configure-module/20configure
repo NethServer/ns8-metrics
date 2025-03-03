@@ -14,6 +14,8 @@ import agent.tasks
 
 def save_config(request):
     rdb = agent.redis_connect(privileged=True)
+    if 'mail_to' in request:
+        request['mail_to'] = ','.join(request['mail_to'])
     rdb.hset(f'module/{os.environ["MODULE_ID"]}/settings', mapping={k: str(v) for k, v in request.items()})
 
 request = json.load(sys.stdin)

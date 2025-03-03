@@ -15,6 +15,8 @@ rdb = agent.redis_connect(use_replica=True)
 # Read config from Redis
 if rdb.exists(f'module/{os.environ["MODULE_ID"]}/settings'):
     config = rdb.hgetall(f'module/{os.environ["MODULE_ID"]}/settings')
+    if 'mail_to' in config:
+        config['mail_to'] = config['mail_to'].split(',')
 else:
     config = {"prometheus_path": None, "grafana_path": None,  "mail_to": [], "mail_from": None, "mail_template": None}
 

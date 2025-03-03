@@ -123,7 +123,7 @@ def generate_alertmanagr_config(redis_client):
 
     if smtp_config != {} and 'mail_to' in config and config['mail_to']:
         mail_config = {
-            'to': ",".join(config['mail_to'])
+            'to': config['mail_to']
         }
         if 'mail_template' in config and config['mail_template']:
             mail_config['html'] = '{{ template "custom_mail_html" . }}'
