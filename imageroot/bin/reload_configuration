@@ -9,6 +9,7 @@ import os
 import yaml
 import agent
 import json
+import sys
 
 ALERT_MANAGER_DEFAULT_CONFIG = {
     'global': {},
@@ -72,7 +73,7 @@ def generate_prometheus_config(redis_client):
         fp.write('      - targets:\n')
         fp.write('        - localhost:9093\n')
         fp.write('rule_files:\n')
-        fp.write('  - "/prometheus/rules.d/*yml"\n')
+        fp.write('  - "/prometheus/rules.d/*.yml"\n')
 
 def validate_and_generate_provider_configs(redis_client):
     for nkey in redis_client.scan_iter("node/*/vpn"):
@@ -145,15 +146,16 @@ def generate_alertmanagr_config(redis_client):
 
 def generate_custom_alertmanager_rules(redis_client):
     rules = []
-    for key in redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/custom_alerts'):
-        alert = redis_client.hget(f'module/{os.environ["MODULE_ID"]}/custom_alerts', key)
+    halerts = redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/custom_alerts') or {}
+    for key, alert in halerts.items():
         if alert:
-            rules.append(f"{alert}")
+            try:
+                rules.append(yaml.safe_load(alert))
+            except Exception as ex:
+                print(f"Skipped custom rule {key}: {ex}", file=sys.stderr)
     if rules:
-        with open('rules.d/custom.yml', 'w') as f:
-            f.write("groups:\n- name: Custom\n  rules:\n")
-            for rule in rules:
-                f.write("  - " + rule + "\n")
+        custom_data = {"groups": [{"name": "Custom", "rules": rules}]}
+        yaml.safe_dump(custom_data, open('rules.d/custom.yml', 'w'))
     else:
         try:
             os.remove('rules.d/custom.yml')
