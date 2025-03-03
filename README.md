@@ -69,32 +69,48 @@ Configuration files are saved inside the state directory. The most important fil
 **This is an experimental feature, do not use in production.**
 Configuration may change on the future releases.
 
-All alert rules are defined in the `rules.d` directory. Files can't be modified directly and will be overwritten on module update.
+All alert rules are defined in the `rules.d` directory. Files can't be
+modified directly and will be overwritten upon module update.
 
-You can create a custom rule by adding the configuration to redis.
-A very curated list of rules can be found at [Awesome Prometheus alerts](https://samber.github.io/awesome-prometheus-alerts/).
+You can create a custom rule by adding the configuration to Redis.
+A carefully curated list of rules can be found at [Awesome Prometheus
+alerts](https://samber.github.io/awesome-prometheus-alerts/).
 
-To add a rule, enter the module, then create a rule file and reload the module:
-```
-echo '<alert_definition>' | redis-cli -x hset module/metrics1/custom_alerts <alert_id>
+To add a custom rule, create a rule file, load it into Redis, and restart
+Prometheus.
+
+Example of `myalert1.yml`:
+
+```yaml
+---
+alert: HostMemoryUnderMemoryPressure
+expr: (rate(node_vmstat_pgmajfault[5m]) > 1000)
+for: 0m
+labels:
+  severity: warning
+annotations:
+  summary: Host memory under memory pressure (instance {{ $labels.instance }})
+  description: |
+    The node is under heavy memory pressure. High rate of loading memory pages from disk.
+      VALUE = {{ $value }}
+      LABELS = {{ $labels }}
 ```
 
-Example:
-```
-echo 'alert: HostMemoryUnderMemoryPressure
-    expr: (rate(node_vmstat_pgmajfault[5m]) > 1000)
-    for: 0m
-    labels:
-      severity: warning
-    annotations:
-      summary: Host memory under memory pressure (instance {{ $labels.instance }})
-      description: "The node is under heavy memory pressure. High rate of loading memory pages from disk.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"' | redis-cli -x hset module/metrics1/custom_alerts mempressure
-```
+Load the configuration into Redis by reading it from the file
+`myalert1.yml`:
 
-Apply the changes:
-```
-runagent -m metrics1 systemctl --user restart prometheus alertmanager
-```
+    redis-cli -x hset module/metrics1/custom_alerts myalert1 <myalert1.yml
+    runagent -m metrics1 systemctl --user restart prometheus
+
+To remove the custom alert, run the following command and restart
+Prometheus:
+
+    redis-cli hdel module/metrics1/custom_alerts myalert1
+    runagent -m metrics1 systemctl --user restart prometheus
+
+If the rule does not appear to be loaded, inspect the module log on the
+Logs page, searching for YAML parse errors.
+
 
 ### Customize alert mail template (experimental)
 
