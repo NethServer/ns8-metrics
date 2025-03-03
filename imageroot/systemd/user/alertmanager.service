@@ -21,6 +21,7 @@ ExecStart=/usr/bin/podman run \
     --network=host \
     --volume=%S/state/alertmanager.yml:/alertmanager.yml:z \
     --volume=%S/state/templates.d/:/etc/alertmanager/templates:z \
+    --volume=alertmanager-data:/alertmanager:z \
     ${ALERTMANAGER_IMAGE} --config.file=/alertmanager.yml
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/alertmanager.ctr-id -t 10
 ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/alertmanager.ctr-id
