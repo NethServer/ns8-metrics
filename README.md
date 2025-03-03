@@ -64,7 +64,10 @@ Configuration files are saved inside the state directory. The most important fil
   - templates.d: directory containing custom alert templates
 - local.yml: Grafana configuration, if enabled
 
-### Customimze alert rules
+### Customimze alert rules (experimental)
+
+**This is an experimental feature, do not use in production.**
+Configuration may change on the future releases.
 
 All alert rules are defined in the `rules.d` directory. Files can't be modified directly and will be overwritten on module update.
 
@@ -93,7 +96,10 @@ Apply the changes:
 runagent -m metrics1 systemctl --user restart prometheus alertmanager
 ```
 
-### Customize alert mail template
+### Customize alert mail template (experimental)
+
+**This is an experimental feature, do not use in production.**
+Configuration may change on the future releases.
 
 You can change the mail template used to send alerts by creating a custom template in the `templates.d` directory.
 
