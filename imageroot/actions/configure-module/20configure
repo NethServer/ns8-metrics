@@ -23,7 +23,7 @@ request = json.load(sys.stdin)
 prometheus_path = request.get('prometheus_path')
 grafana_path = request.get('grafana_path')
 
-save_config(request)
+save_config(request.copy())
 
 # Configure Traefik to route prometheus path requests to the prometheus service
 if prometheus_path:
