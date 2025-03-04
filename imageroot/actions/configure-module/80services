@@ -9,7 +9,9 @@
 systemctl --user restart prometheus.service alertmanager.service alert-proxy.service
 
 if [ -n "$GRAFANA_PATH" ]; then
+    systemctl --user enable grafana.service
     systemctl --user restart grafana.service
 else
+    systemctl --user disable grafana.service
     systemctl --user stop grafana.service
 fi
