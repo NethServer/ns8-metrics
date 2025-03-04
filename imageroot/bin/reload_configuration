@@ -130,8 +130,11 @@ def generate_alertmanagr_config(redis_client):
             'to': config['mail_to']
         }
         if 'mail_template' in config and config['mail_template']:
-            mail_config['html'] = '{{ template "custom_mail_html" . }}'
-            mail_config['headers'] = { 'subject': '{{ template "custom_mail_subject" . }}' }
+            template_key = config['mail_template']
+            mail_config['html'] = '{{{{ template "{}_html" . }}}}'.format(template_key)
+            mail_config['headers'] = {
+                'subject': '{{{{ template "{}_subject" . }}}}'.format(template_key),
+            }
         alert_config['receivers'].append({
             'email_configs': [ mail_config ],
             'name': 'mail-alert'
@@ -166,16 +169,11 @@ def generate_custom_alertmanager_rules(redis_client):
             pass
 
 def generate_custom_alertmanager_templates(redis_client):
-    # Search for all custom_*.yml files, delete the ones that are not in the nodes list
-    with os.scandir('templates.d') as it:
-        for entry in it:
-            if entry.is_file() and entry.name.startswith('custom_') and entry.name not in nodes:
-                os.remove(entry.path)
-    for key in redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/custom_templates'):
-        template = redis_client.hget(f'module/{os.environ["MODULE_ID"]}/custom_templates', key)
-        if template:
-            with open(f'templates.d/custom_{key}.yml', 'w') as f:
-                f.write(template + '\n')
+    # Custom template declarations are concatenated in the same file:
+    with open(f'templates.d/custom.tmpl', 'w') as f:
+        for template in redis_client.hvals(f'module/{os.environ["MODULE_ID"]}/custom_templates'):
+            if template:
+                f.write(template)
 
 # connect to client and fetch providers for prometheus
 redis_client = agent.redis_connect(use_replica=True)
