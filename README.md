@@ -117,19 +117,17 @@ Logs page, searching for YAML parse errors.
 **This is an experimental feature, do not use in production.**
 Configuration may change on the future releases.
 
-You can change the mail template used to send alerts by creating a custom template in the `templates.d` directory.
+First, create a template file, for example `myalert.tmpl`. Make sure to
+define `myalert_subject` and `myalert_html` sections, as they are
+used by the module to render the mail. For additional information refer to
+[Alertmanager
+documentation](https://prometheus.io/docs/alerting/latest/notification_examples/).
 
-First, create a template.
-Make sure to not change `custom_mail_subject` and `custom_mail_html` names, as they are used by the module to render the mail.
-Execute the following commands:
-```
-echo '<template>' | redis-cli -x hset module/metrics1/custom_templates <template_name>
-```
+Example of `myalert.tmpl` contents:
 
-Example:
-```
-echo '{{ define "custom_mail_subject" }}Alert on {{ range .Alerts.Firing }}{{ .Labels.instance }} {{ end }}{{ end }}
-{{ define "custom_mail_html" }}
+```text
+{{ define "myalert_subject" }}Alert on {{ range .Alerts.Firing }}{{ .Labels.instance }} {{ end }}{{ end }}
+{{ define "myalert_html" }}
 <html>
 <head>
 <title>Alert!</title>
@@ -151,24 +149,25 @@ echo '{{ define "custom_mail_subject" }}Alert on {{ range .Alerts.Firing }}{{ .L
 </p>
 {{ end }}
 </body></html>
-{{ end }}' | redis-cli -x hset module/metrics2/custom_templates mail
+{{ end }}
 ```
 
-Apply the changes:
+Load the template file in Redis DB:
+
 ```
-runagent -m metrics1 systemctl --user restart prometheus alertmanager
+redis-cli -x hset module/metrics1/custom_templates myalert <myalert.tmpl
 ```
 
-Then, configure the module to use the new template:
+Configure the module to use the new template:
 ```
-api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_from": "no-reply@nethserver.org", "mail_to": ["alert@nethserver.org"], "mail_template": "custom_mail_html"}'
+api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_from": "no-reply@nethserver.org", "mail_to": ["alert@nethserver.org"], "mail_template": "myalert"}'
 ```
 
 You can test the template rendering using the following command:
 ```
 runagent -m metrics1
-podman exec -ti alertmanager amtool template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.text='{{ template "custom_mail_html" . }}'
-podman exec -ti alertmanager amtool template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.text='{{ template "custom_mail_subject" . }}'
+podman exec -ti alertmanager amtool template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.text='{{ template "myalert_html" . }}'
+podman exec -ti alertmanager amtool template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.text='{{ template "myalert_subject" . }}'
 ```
 
 ## Testing
