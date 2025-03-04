@@ -108,13 +108,16 @@ def read_config(redis_client):
 def generate_alertmanagr_config(redis_client):
     config = read_config(redis_client)
     smtp = agent.get_smarthost_settings(redis_client)
-    if 'host' in smtp and smtp['host']:
+    if smtp['enabled'] is True:
         smtp_config = {
             'smtp_from': config.get('mail_from', None) if config.get('mail_from', None) else 'alertmanager@' + agent.get_hostname(),
             'smtp_smarthost': f"{smtp['host']}:{smtp['port']}",
             'smtp_auth_username': smtp['username'],
             'smtp_auth_password': smtp['password'],
-            'smtp_require_tls': smtp['encrypt_smtp'] != 'none',
+            'smtp_require_tls': smtp['encrypt_smtp'] == 'starttls',
+            'smtp_tls_config': {
+                'insecure_skip_verify': (smtp['tls_verify'] is False),
+            },
         }
     else:
         smtp_config = {}
