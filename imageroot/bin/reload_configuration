@@ -127,6 +127,7 @@ def generate_alertmanagr_config(redis_client):
 
     if smtp_config != {} and 'mail_to' in config and config['mail_to']:
         mail_config = {
+            'send_resolved': True,
             'to': config['mail_to']
         }
         if 'mail_template' in config and config['mail_template']:
