@@ -34,7 +34,7 @@ with open('rules.d/loki.yml', 'w') as f:
     expr: up{job="loki"} == 0
     for: 0m
     labels:
-      severity: critical
+      severity: warning
       node: ''' + os.getenv("NODE_ID") + '''
     annotations:
       summary: Loki instance {{ $labels.instance }} is down
