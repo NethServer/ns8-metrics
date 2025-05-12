@@ -28,10 +28,19 @@
             "format": "string"
         },
         "mail_from": {
-            "type": "string",
-            "description": "Email address used as sender for alerts.",
-            "format": "email"
+            "description": "Email address used as sender for alerts. Either a valid email address or empty",
+	        "oneOf": [
+                {
+                    "type": "string",
+                    "format": "email"
+                },
+                {
+                    "type": "string",
+                    "maxLength": 0
+                }
+            ]
         },
+
         "mail_to": {
             "type": "array",
             "description": "Email addresses used as recipients for alerts.",
