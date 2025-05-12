@@ -20,6 +20,7 @@ prometheus_path = os.getenv('PROMETHEUS_PATH', '')
 
 with open('local.yml', 'w') as fp:
     fp.write("apiVersion: 1\n")
+    fp.write("prune: true\n")
     fp.write("datasources:\n")
     fp.write('  - name: Local Promethus\n')
     fp.write('    type: prometheus\n')
