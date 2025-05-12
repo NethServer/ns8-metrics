@@ -40,7 +40,6 @@
                 }
             ]
         },
-
         "mail_to": {
             "type": "array",
             "description": "Email addresses used as recipients for alerts.",
