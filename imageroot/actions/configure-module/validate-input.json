@@ -29,7 +29,7 @@
         },
         "mail_from": {
             "description": "Email address used as sender for alerts. Either a valid email address or empty",
-	        "oneOf": [
+	    "oneOf": [
                 {
                     "type": "string",
                     "format": "email"
