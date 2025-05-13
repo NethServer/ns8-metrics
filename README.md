@@ -170,6 +170,32 @@ podman exec -ti alertmanager amtool template render --template.glob='/etc/alertm
 podman exec -ti alertmanager amtool template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.text='{{ template "myalert_subject" . }}'
 ```
 
+### Provisioning Grafana and Prometheus
+
+The module listens to the following events:
+- `metrics-datasource-changed`: when a new Grafana datasource is added or removed by a module
+
+The module will automatically provision the new datasource and target to Grafana and Prometheus.
+Module handlers will search for the configuration inside the Redis module space keys.
+
+#### metrics-datasource-changed
+
+The `provision-grafana` will search for the following key: `module/<module_id>/metrics_datasources`.
+The key is an hash containing the following fields:
+- `<name>`: a name for the datasource
+- `<json_config>`: the JSON configuration for the datasource
+
+Each datasource will be saved on a different file inside the `datasources` directory, named like `provision_<module_id>_<name>.json`.
+`<module_id>_<name>.json`.
+
+Example of a datasource configuration for the `postgresql1` module:
+```
+redis-cli hset module/postgresql1/metrics_datasources phonebook '[{"name":"phonebook","type":"postgres","access":"proxy","url":"10.5.4.1:20004","database":"phonebook","user":"test","secureJsonData":{"password":"test"},"jsonData":{"sslmode":"disable","postgresVersion":1400,"timescaledb":false}}]'
+```
+
+The JSON must reflect the Grafana datasource configuration.
+
+
 ## Testing
 
 Test the module using the `test-module.sh` script:
