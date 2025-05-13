@@ -174,6 +174,7 @@ podman exec -ti alertmanager amtool template render --template.glob='/etc/alertm
 
 The module listens to the following events:
 - `metrics-datasource-changed`: when a new Grafana datasource is added or removed by a module
+- `metrics-dashboard-changed`: when a new Grafana dashboard is added or removed by a module
 
 The module will automatically provision the new datasource and target to Grafana and Prometheus.
 Module handlers will search for the configuration inside the Redis module space keys.
@@ -195,6 +196,20 @@ redis-cli hset module/postgresql1/metrics_datasources phonebook '[{"name":"phone
 
 The JSON must reflect the Grafana datasource configuration.
 
+#### metrics-dashboard-changed
+
+The `provision-grafana` will search for the following key: `module/<module_id>/metrics_dashboards`.
+The key is an hash containing the following fields:
+- `<name>`: a name for the dashboard
+- `<json_config>`: the JSON configuration for the dashboard
+
+Each dashboard will be saved on a different file inside the `dashboards` directory, named like `provision_<module_id>_<name>.json`.
+`<module_id>_<name>.json`.
+
+Example of a dashboard configuration for the `postgresql1` module:
+```
+cat dashboard.json |  redis-cli -x hset module/postgresql1/metrics_dashboards phonebook
+```
 
 ## Testing
 

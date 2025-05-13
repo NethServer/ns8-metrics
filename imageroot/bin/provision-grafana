@@ -81,3 +81,23 @@ for module in rdb.scan_iter("module/*/metrics_datasources"):
         datasources = {"apiVersion": 1, "datasources": data}
         with open(filename, 'w') as fp:
             yaml.safe_dump(datasources, fp, sort_keys=False)
+
+# Delete all files dashboards/provision_*.yml
+os.makedirs("../etc/dashboards", exist_ok=True)
+for filename in os.listdir("../etc/dashboards"):
+    if filename.startswith("provision_") and filename.endswith(".json"):
+        os.remove(os.path.join("../etc/dashboards", filename))
+
+# Iterate over all modules instances: module/<module_id>/metrics_dashboards which is an hash
+# with one field:
+# - <dashboard_name>
+# - <json_config>
+# and create a dashboard provision file for each one
+for module in rdb.scan_iter("module/*/metrics_dashboards"):
+    module_id = module.split('/')[1]
+    dashboards = rdb.hgetall(module)
+    for db_key, db_val in dashboards.items():
+        data = json.loads(db_val)
+        filename = f"../etc/dashboards/provision_{module_id}_{db_key}.json"
+        with open(filename, 'w') as fp:
+            json.dump(data, fp)
