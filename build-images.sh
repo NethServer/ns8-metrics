@@ -27,7 +27,7 @@ buildah config --entrypoint=/ \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.max-per-node=1" \
     --label='org.nethserver.flags=core_module no_data_backup' \
-    --label="org.nethserver.images=quay.io/prometheus/prometheus:v3.3.1 quay.io/prometheus/alertmanager:v0.28.1 docker.io/grafana/grafana:11.6.1 ghcr.io/nethserver/alert-proxy:${IMAGETAG:-latest}" \
+    --label="org.nethserver.images=quay.io/prometheus/prometheus:v3.3.1 quay.io/prometheus/alertmanager:v0.28.1 docker.io/grafana/grafana:12.0.0 ghcr.io/nethserver/alert-proxy:${IMAGETAG:-latest}" \
     "${container}"
 # Commit the image
 buildah commit "${container}" "${repobase}/${reponame}"
