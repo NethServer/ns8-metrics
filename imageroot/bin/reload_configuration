@@ -87,6 +87,15 @@ def validate_and_generate_provider_configs(redis_client):
             file.write('  labels:\n')
             file.write(f"    node: {node_id}\n")
 
+    for module in redis_client.scan_iter("module/*/metrics_targets"):
+        module_id = module.split('/')[1]
+        targets = redis_client.hgetall(module)
+        for db_key, db_val in targets.items():
+            data = json.loads(db_val)
+            filename = f"prometheus.d/provision_{module_id}_{db_key}.yml"
+            with open(filename, 'w') as fp:
+                 yaml.safe_dump(data, fp, sort_keys=False)
+
 def clean_up_old_provider_configs(redis_client):
     nodes = []
     for nkey in redis_client.scan_iter("node/*/vpn"):
@@ -96,6 +105,12 @@ def clean_up_old_provider_configs(redis_client):
     with os.scandir('prometheus.d') as it:
         for entry in it:
             if entry.is_file() and entry.name.startswith('node_') and entry.name not in nodes:
+                os.remove(entry.path)
+
+def clean_up_old_provisioned_targets(redis_client):
+    with os.scandir('prometheus.d') as it:
+        for entry in it:
+            if entry.name.startswith('provision_'):
                 os.remove(entry.path)
 
 def read_config(redis_client):
@@ -180,6 +195,7 @@ def generate_custom_alertmanager_templates(redis_client):
 redis_client = agent.redis_connect(use_replica=True)
 
 # Generate providers configuration
+clean_up_old_provisioned_targets(redis_client)
 generate_prometheus_config(redis_client)
 validate_and_generate_provider_configs(redis_client)
 clean_up_old_provider_configs(redis_client)

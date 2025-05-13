@@ -175,13 +175,14 @@ podman exec -ti alertmanager amtool template render --template.glob='/etc/alertm
 The module listens to the following events:
 - `metrics-datasource-changed`: when a new Grafana datasource is added or removed by a module
 - `metrics-dashboard-changed`: when a new Grafana dashboard is added or removed by a module
+- `metrics-target-changed`: when a new Prometheus target is added or removed by a module
 
 The module will automatically provision the new datasource and target to Grafana and Prometheus.
 Module handlers will search for the configuration inside the Redis module space keys.
 
 #### metrics-datasource-changed
 
-The `provision-grafana` will search for the following key: `module/<module_id>/metrics_datasources`.
+The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_datasources`.
 The key is an hash containing the following fields:
 - `<name>`: a name for the datasource
 - `<json_config>`: the JSON configuration for the datasource
@@ -198,18 +199,47 @@ The JSON must reflect the Grafana datasource configuration.
 
 #### metrics-dashboard-changed
 
-The `provision-grafana` will search for the following key: `module/<module_id>/metrics_dashboards`.
+The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_dashboards`.
 The key is an hash containing the following fields:
 - `<name>`: a name for the dashboard
 - `<json_config>`: the JSON configuration for the dashboard
 
-Each dashboard will be saved on a different file inside the `dashboards` directory, named like `provision_<module_id>_<name>.json`.
+Each dashboard will be saved on a file inside the `dashboards` directory, named like `provision_<module_id>_<name>.json`.
 `<module_id>_<name>.json`.
 
 Example of a dashboard configuration for the `postgresql1` module:
 ```
 cat dashboard.json |  redis-cli -x hset module/postgresql1/metrics_dashboards phonebook
 ```
+
+#### metrics-target-changed
+
+The `reload_configuration` script will search for the following key: `module/<module_id>/metrics_targets`.
+The key is an hash containing the following fields:
+- `<name>`: a name for the target
+- `<json_config>`: the JSON configuration for the target
+
+Example of a target configuration for the `postgresql1` module in JSON format:
+```
+cat target.json | redis-cli -x hset module/postgresql1/metrics_targets postgres
+```
+
+Content of the `target.json` file:
+```json
+[
+  {
+    "targets": [
+      "10.5.4.1:9187"
+    ],
+    "labels": {
+      "module_id": "postresql1"
+    }
+  }
+]
+```
+
+The JSON configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
+`<module_id>_<name>.json`.
 
 ## Testing
 
