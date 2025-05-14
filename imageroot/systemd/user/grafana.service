@@ -23,6 +23,7 @@ ExecStart=/usr/bin/podman run \
     --volume=%S/state/datasources/:/etc/grafana/provisioning/datasources:z \
     --volume=%S/etc/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:z \
     --volume=%S/etc/dashboards/:/etc/grafana/dashboards:z \
+    --volume=%S/etc/grafana.ini:/etc/grafana/grafana.ini:z \
     -e GF_SERVER_SERVE_FROM_SUB_PATH=true \
     -e GF_SERVER_ROOT_URL=/${GRAFANA_PATH} \
     ${GRAFANA_IMAGE}
