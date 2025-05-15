@@ -5,5 +5,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-# reload the prometheus configuration
-reload_configuration
+# Reload the prometheus configuration
+provision-prometheus

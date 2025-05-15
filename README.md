@@ -179,7 +179,7 @@ When a module wants to add a new target, it must use the `metrics-target-changed
 
 #### metrics-target-changed event
 
-The `reload_configuration` script will search for the following key: `module/<module_id>/metrics_targets`.
+The `provision-prometheus` script will search for the following key: `module/<module_id>/metrics_targets`.
 The key is an hash containing the following fields:
 - key `<name>`, a name for the target
 - value `<yaml_config>`, the YAML configuration for the target
