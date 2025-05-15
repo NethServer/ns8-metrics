@@ -9,6 +9,7 @@ import os
 import agent
 import json
 import yaml
+import shutil
 from collections import OrderedDict
 
 # Read prometheus leader node
@@ -74,19 +75,35 @@ for module in rdb.scan_iter("module/*/metrics_datasources"):
     # Read all datasources saved under this module
     datasources = rdb.hgetall(module)
     for ds_key, ds_val in datasources.items():
-        # parse JSON into a plain dict (insertion order is preserved by default in Python ≥3.7)
-        data = json.loads(ds_val)
+        try:
+            data = yaml.safe_load(ds_val)
+        except:
+            print(f"Skpping datasouce {ds_key} for {module_id}: invalid YAML")
+            continue
         # write out as YAML without sorting keys
         filename = f"datasources/provision_{module_id}_{ds_key}.yml"
-        datasources = {"apiVersion": 1, "datasources": data}
         with open(filename, 'w') as fp:
-            yaml.safe_dump(datasources, fp, sort_keys=False)
+            yaml.safe_dump(data, fp, sort_keys=False)
+
+# Prepare dashboards folders
+core_dashboards = "dashboards/core"
+os.makedirs(core_dashboards, exist_ok=True)
+modules_dashboards = "dashboards/modules"
+os.makedirs(modules_dashboards, exist_ok=True)
+
+# Remove all files in dashboards/core
+for filename in os.listdir(core_dashboards):
+    os.remove(os.path.join(core_dashboards, filename))
+
+# Copy all core dashboards from ../etc/dashboards to dashboards/core
+for filename in os.listdir("../etc/dashboards"):
+    if filename.endswith(".json"):
+        shutil.copy(os.path.join("../etc/dashboards", filename), core_dashboards)
 
 # Delete all files dashboards/provision_*.yml
-os.makedirs("../etc/dashboards", exist_ok=True)
-for filename in os.listdir("../etc/dashboards"):
+for filename in os.listdir(modules_dashboards):
     if filename.startswith("provision_") and filename.endswith(".json"):
-        os.remove(os.path.join("../etc/dashboards", filename))
+        os.remove(os.path.join(modules_dashboards, filename))
 
 # Iterate over all modules instances: module/<module_id>/metrics_dashboards which is an hash
 # with one field:
@@ -98,6 +115,6 @@ for module in rdb.scan_iter("module/*/metrics_dashboards"):
     dashboards = rdb.hgetall(module)
     for db_key, db_val in dashboards.items():
         data = json.loads(db_val)
-        filename = f"../etc/dashboards/provision_{module_id}_{db_key}.json"
+        filename = f"{modules_dashboards}/provision_{module_id}_{db_key}.json"
         with open(filename, 'w') as fp:
             json.dump(data, fp)

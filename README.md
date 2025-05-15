@@ -184,24 +184,45 @@ Module handlers will search for the configuration inside the Redis module space 
 
 The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_datasources`.
 The key is an hash containing the following key-value pairs:
-- Key `<name>`, a name for the datasource
-- Value `<json_config>`, the JSON configuration for the datasource
+- key `<name>`, a name for the datasource
+- value `<yaml_config>`, the YAML configuration for the datasource
 
 Each datasource will be saved on a different file inside the `datasources` directory, named like `provision_<module_id>_<name>.json`.
 
 Example of a datasource configuration for the `postgresql1` module:
 ```
-redis-cli hset module/postgresql1/metrics_datasources phonebook '[{"name":"phonebook","type":"postgres","access":"proxy","url":"10.5.4.1:20004","database":"phonebook","user":"test","secureJsonData":{"password":"test"},"jsonData":{"sslmode":"disable","postgresVersion":1400,"timescaledb":false}}]'
+cat datasource.yml | redis-cli -x hset module/postgresql1/metrics_datasources samba_audit
 ```
 
-The JSON must reflect the Grafana datasource configuration.
+The YAML must reflect the Grafana datasource configuration, see this [example](https://grafana.com/docs/grafana/latest/datasources/postgres/configure/#provision-the-data-source) for Postgres.
+
+Example of a datasource configuration for the `postgresql1` module in YAML format:
+```yaml
+apiVersion: 1
+datasources:
+- name: SambaAudit
+  type: postgres
+  url: 10.5.4.1:20004
+  user: smbaudit_reader
+  secureJsonData:
+    password: smbauditpass
+  jsonData:
+    database: samba_audit
+    sslmode: disable
+    maxOpenConns: 100
+    maxIdleConns: 100
+    maxIdleConnsAuto: true
+    connMaxLifetime: 14400
+    postgresVersion: 14000
+    timescaledb: false
+```
 
 #### metrics-dashboard-changed
 
 The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_dashboards`.
 The key is an hash containing the following fields:
-- `<name>`: a name for the dashboard
-- `<json_config>`: the JSON configuration for the dashboard
+- key `<name>`, a name for the dashboard
+- value `<json_config>`, the JSON configuration for the dashboard
 
 Each dashboard will be saved on a file inside the `dashboards` directory, named like `provision_<module_id>_<name>.json`.
 `<module_id>_<name>.json`.
@@ -211,12 +232,14 @@ Example of a dashboard configuration for the `postgresql1` module:
 cat dashboard.json |  redis-cli -x hset module/postgresql1/metrics_dashboards phonebook
 ```
 
+**Note**: if multiple modules define the a dashboard with the same uid, only the first one will be used.
+
 #### metrics-target-changed
 
 The `reload_configuration` script will search for the following key: `module/<module_id>/metrics_targets`.
 The key is an hash containing the following fields:
-- `<name>`: a name for the target
-- `<json_config>`: the JSON configuration for the target
+- key `<name>`, a name for the target
+- value `<json_config>`, the JSON configuration for the target
 
 Example of a target configuration for the `postgresql1` module in JSON format:
 ```
