@@ -228,7 +228,6 @@ The key is an hash containing the following fields:
 - value `<json_config>`, the JSON configuration for the dashboard
 
 Each dashboard will be saved on a file inside the `dashboards` directory, named like `provision_<module_id>_<name>.json`.
-`<module_id>_<name>.json`.
 
 Example of a dashboard configuration for the `postgresql1` module:
 ```
