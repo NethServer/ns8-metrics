@@ -183,9 +183,9 @@ Module handlers will search for the configuration inside the Redis module space 
 #### metrics-datasource-changed
 
 The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_datasources`.
-The key is an hash containing the following fields:
-- `<name>`: a name for the datasource
-- `<json_config>`: the JSON configuration for the datasource
+The key is an hash containing the following key-value pairs:
+- Key `<name>`, a name for the datasource
+- Value `<json_config>`, the JSON configuration for the datasource
 
 Each datasource will be saved on a different file inside the `datasources` directory, named like `provision_<module_id>_<name>.json`.
 
