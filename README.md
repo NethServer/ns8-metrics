@@ -41,7 +41,8 @@ The module is automatically installed by the cluster initialization script.
 ## Configure
 
 Launch `configure-module`, by setting the following parameters:
-- `prometheus_path`: path to access Prometheus web UI, if left blank Prometheus will be not exposed
+- `prometheus_path`: path to access Prometheus web UI, if left blank Prometheus will be not exposed; if enabled, you can authenticate with the same
+   credentials used to access the `/cluster-admin` web UI
 - `grafana_path`: path to access Grafana web UI, if left blank grafana will be stopped; if enabled, you can authenticate with the same
    credentials used to access the `/cluster-admin` web UI
 - `mail_to`: list of email addresses to receive alerts, this requires that mail notifications are enabled at cluster level
