@@ -41,8 +41,10 @@ The module is automatically installed by the cluster initialization script.
 ## Configure
 
 Launch `configure-module`, by setting the following parameters:
-- `prometheus_path`: path to access Prometheus web UI, if left blank Prometheus will be not exposed
-- `grafana_path`: path to access Grafana web UI, if left blank grafana will be stopped; if enabled default credentials are `admin`/`admin`
+- `prometheus_path`: path to access Prometheus web UI, if left blank Prometheus will be not exposed; if enabled, you can authenticate with the same
+   credentials used to access the `/cluster-admin` web UI
+- `grafana_path`: path to access Grafana web UI, if left blank grafana will be stopped; if enabled, you can authenticate with the same
+   credentials used to access the `/cluster-admin` web UI
 - `mail_to`: list of email addresses to receive alerts, this requires that mail notifications are enabled at cluster level
 - `mail_from`: email address used to send alerts, if left blank the default value is `alertmanager@<node_fqdn>`
 - `mail_template`: name of the template to use to send alerts, if left blank the default template is used
@@ -168,6 +170,108 @@ You can test the template rendering using the following command:
 runagent -m metrics1
 podman exec -ti alertmanager amtool template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.text='{{ template "myalert_html" . }}'
 podman exec -ti alertmanager amtool template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.text='{{ template "myalert_subject" . }}'
+```
+
+### Provisioning Prometheus
+
+The `prometheus` service is configured to load all targets from the `prometheus.d` directory.
+If a target is added or removed, prometheus will automatically reload the configuration.
+
+When a module wants to add a new target, it must use the `metrics-target-changed` event.
+
+#### metrics-target-changed event
+
+The `provision-prometheus` script will search for the following key: `module/<module_id>/metrics_targets`.
+The key is an hash containing the following fields:
+- key `<name>`, a name for the target
+- value `<yaml_config>`, the YAML configuration for the target
+
+Example of a target configuration for the `postgresql1` module in JSON format:
+```
+cat target.yaml | redis-cli -x hset module/postgresql1/metrics_targets postgres
+```
+
+Content of the `target.yaml` file:
+```yaml
+- targets:
+  - 10.5.4.1:9187
+  labels:
+    module_id: postresql1
+```
+
+The configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
+
+
+### Provisioning Grafana
+
+The Grafana service is configured to load all datasources and dashboards from the `datasources` and `dashboards` directories.
+The service must be restarted when a new datasource or dashboard is added or removed.
+
+### Dashboards
+
+Dashboards are defined in JSON format. The module provides 2 types of dashboards:
+- core dashboards: these dashboards are bundled inside the module in the `imageroot/etc/dashboards` directory.
+  Such dashboards are copied inside the `dashboards/core` directory when the Grafana service is started.
+- module dashboards: these dashboards are created by other modules, the configuration is stored inside the Redis DB.
+  When a module wants to add a new dashboard, it must use the `metrics-dashboard-changed` event.
+  Such dashboards are saved inside the `dashboards/modules` directory.
+
+##### metrics-dashboard-changed
+
+The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_dashboards`.
+The key is an hash containing the following fields:
+- key `<name>`, a name for the dashboard
+- value `<json_config>`, the JSON configuration for the dashboard
+
+Each dashboard will be saved on a file inside the `dashboards` directory, named like `provision_<module_id>_<name>.json`.
+
+Example of a dashboard configuration for the `postgresql1` module:
+```
+cat dashboard.json |  redis-cli -x hset module/postgresql1/metrics_dashboards phonebook
+```
+
+**Note**: if multiple modules define the a dashboard with the same uid, only the first one will be used.
+
+### Datasources
+
+Datatsources are defined in YAML format and can be added by other modules.
+When a module wants to add a new datasource, it must use the `metrics-datasource-changed` event.
+
+##### metrics-datasource-changed event
+
+The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_datasources`.
+The key is an hash containing the following key-value pairs:
+- key `<name>`, a name for the datasource
+- value `<yaml_config>`, the YAML configuration for the datasource
+
+Each datasource will be saved on a different file inside the `datasources` directory, named like `provision_<module_id>_<name>.json`.
+
+Example of a datasource configuration for the `postgresql1` module:
+```
+cat datasource.yml | redis-cli -x hset module/postgresql1/metrics_datasources samba_audit
+```
+
+The YAML must reflect the Grafana datasource configuration, see this [example](https://grafana.com/docs/grafana/latest/datasources/postgres/configure/#provision-the-data-source) for Postgres.
+
+Example of a datasource configuration for the `postgresql1` module in YAML format:
+```yaml
+apiVersion: 1
+datasources:
+- name: SambaAudit
+  type: postgres
+  url: 10.5.4.1:20004
+  user: smbaudit_reader
+  secureJsonData:
+    password: smbauditpass
+  jsonData:
+    database: samba_audit
+    sslmode: disable
+    maxOpenConns: 100
+    maxIdleConns: 100
+    maxIdleConnsAuto: true
+    connMaxLifetime: 14400
+    postgresVersion: 14000
+    timescaledb: false
 ```
 
 ## Testing

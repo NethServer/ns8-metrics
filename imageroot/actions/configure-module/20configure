@@ -36,6 +36,11 @@ if prometheus_path:
             'url': 'http://127.0.0.1:9091',
             'http2https': True,
             'path': f'/{prometheus_path}',
+            "forward_auth": {
+                "address": "http://127.0.0.1:9311/api/module/metrics1/http-basic/authorize-metrics",
+                "skip_tls_verify": True,
+                "auth_response_headers": [ "X-Auth-User" ]
+            }
         },
     )
 else:
@@ -60,6 +65,11 @@ if grafana_path:
             'url': 'http://127.0.0.1:3000',
             'http2https': True,
             'path': f'/{grafana_path}',
+            "forward_auth": {
+                "address": "http://127.0.0.1:9311/api/module/metrics1/http-basic/authorize-metrics",
+                "skip_tls_verify": True,
+                "auth_response_headers": [ "X-Auth-User" ]
+            }
         },
     )
 else:

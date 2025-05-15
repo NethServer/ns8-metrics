@@ -6,7 +6,12 @@
 #
 
 import os
+import sys
 import agent
+import json
+import yaml
+import shutil
+from collections import OrderedDict
 
 # Read prometheus leader node
 rdb = agent.redis_connect(use_replica=True)
@@ -18,8 +23,16 @@ logcli["LOKI_ADDR"] = 'http://'+logcli["LOKI_ADDR"]+':'+logcli["LOKI_HTTP_PORT"]
 
 prometheus_path = os.getenv('PROMETHEUS_PATH', '')
 
-with open('local.yml', 'w') as fp:
+# Delete old local.yml, now config has been moved to datasources/local.yml
+local_yml_path = 'local.yml'
+if os.path.exists(local_yml_path):
+    os.remove(local_yml_path)
+
+os.makedirs("datasources", exist_ok=True)
+
+with open('datasources/local.yml', 'w') as fp:
     fp.write("apiVersion: 1\n")
+    fp.write("prune: true\n")
     fp.write("datasources:\n")
     fp.write('  - name: Local Promethus\n')
     fp.write('    type: prometheus\n')
@@ -46,3 +59,63 @@ with open('local.yml', 'w') as fp:
     fp.write('    jsonData:\n')
     fp.write('      implementation: prometheus\n')
     fp.write('      handleGrafanaManagedAlerts: true\n')
+
+
+# Delete all files datasources/provision_*.yml
+for filename in os.listdir("datasources"):
+    if filename.startswith("provision_") and filename.endswith(".yml"):
+        os.remove(os.path.join("datasources", filename))
+
+# Iterate over all modules instances: module/<module_id>/metrics_datasources which is an hash
+# with one field:
+# - <datasource_name>
+# - <json_config>
+# and create a datasource for each one
+for module in rdb.scan_iter("module/*/metrics_datasources"):
+    module_id = module.split('/')[1]
+    # Read all datasources saved under this module
+    datasources = rdb.hgetall(module)
+    for ds_key, ds_val in datasources.items():
+        try:
+            data = yaml.safe_load(ds_val)
+        except Exception as ex:
+            print(f"Skipped datasource {ds_key} for {module_id}: {ex}", file=sys.stderr)
+            continue
+        # write out as YAML without sorting keys
+        filename = f"datasources/provision_{module_id}_{ds_key}.yml"
+        with open(filename, 'w') as fp:
+            yaml.safe_dump(data, fp, sort_keys=False)
+
+# Prepare dashboards folders
+core_dashboards = "dashboards/core"
+os.makedirs(core_dashboards, exist_ok=True)
+modules_dashboards = "dashboards/modules"
+os.makedirs(modules_dashboards, exist_ok=True)
+
+# Remove all files in dashboards/core
+for filename in os.listdir(core_dashboards):
+    os.remove(os.path.join(core_dashboards, filename))
+
+# Copy all core dashboards from ../etc/dashboards to dashboards/core
+for filename in os.listdir("../etc/dashboards"):
+    if filename.endswith(".json"):
+        shutil.copy(os.path.join("../etc/dashboards", filename), core_dashboards)
+
+# Delete all files dashboards/provision_*.yml
+for filename in os.listdir(modules_dashboards):
+    if filename.startswith("provision_") and filename.endswith(".json"):
+        os.remove(os.path.join(modules_dashboards, filename))
+
+# Iterate over all modules instances: module/<module_id>/metrics_dashboards which is an hash
+# with one field:
+# - <dashboard_name>
+# - <json_config>
+# and create a dashboard provision file for each one
+for module in rdb.scan_iter("module/*/metrics_dashboards"):
+    module_id = module.split('/')[1]
+    dashboards = rdb.hgetall(module)
+    for db_key, db_val in dashboards.items():
+        data = json.loads(db_val)
+        filename = f"{modules_dashboards}/provision_{module_id}_{db_key}.json"
+        with open(filename, 'w') as fp:
+            json.dump(data, fp)
