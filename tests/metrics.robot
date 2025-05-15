@@ -35,12 +35,12 @@ Check if grafana is running
     Should Be Equal As Integers    ${rc}  0
 
 Check if Grafana is accessible from Traefik with basic auth
-    ${rc} =    Execute Command    sleep 10 && curl -f -Lk http://admin:Nethesis,1234@127.0.0.1/grafana/
+    ${rc} =    Execute Command    sleep 10 && curl -f -Lk https://admin:Nethesis,1234@127.0.0.1/grafana/
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
 
 Check if Prometheus is accessible from Traefik with basic auth
-    ${rc} =    Execute Command    sleep 10 && curl -f -Lk http://admin:Nethesis,1234@127.0.0.1/prometheus/
+    ${rc} =    Execute Command    sleep 10 && curl -f -Lk https://admin:Nethesis,1234@127.0.0.1/prometheus/
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
 
