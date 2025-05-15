@@ -171,76 +171,107 @@ podman exec -ti alertmanager amtool template render --template.glob='/etc/alertm
 podman exec -ti alertmanager amtool template render --template.glob='/etc/alertmanager/templates/*.tmpl' --template.text='{{ template "myalert_subject" . }}'
 ```
 
-### Provisioning Grafana and Prometheus
+### Provisioning Prometheus
 
-The module listens to the following events:
-- `metrics-datasource-changed`: when a new Grafana datasource is added or removed by a module
-- `metrics-dashboard-changed`: when a new Grafana dashboard is added or removed by a module
-- `metrics-target-changed`: when a new Prometheus target is added or removed by a module
+The `prometheus` service is configured to load all targets from the `prometheus.d` directory.
+If a target is added or removed, prometheus will automatically reload the configuration.
 
-The module will automatically provision the new datasource and target to Grafana and Prometheus.
-Module handlers will search for the configuration inside the Redis module space keys.
+When a module wants to add a new target, it must use the `metrics-target-changed` event.
 
-#### metrics-datasource-changed
+#### metrics-target-changed event
 
-The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_datasources`.
+The `provision-prometheus` script will search for the following key: `module/<module_id>/metrics_targets`.
 The key is an hash containing the following fields:
-- `<name>`: a name for the datasource
-- `<json_config>`: the JSON configuration for the datasource
+- key `<name>`, a name for the target
+- value `<yaml_config>`, the YAML configuration for the target
 
-Each datasource will be saved on a different file inside the `datasources` directory, named like `provision_<module_id>_<name>.json`.
-`<module_id>_<name>.json`.
-
-Example of a datasource configuration for the `postgresql1` module:
+Example of a target configuration for the `postgresql1` module in JSON format:
 ```
-redis-cli hset module/postgresql1/metrics_datasources phonebook '[{"name":"phonebook","type":"postgres","access":"proxy","url":"10.5.4.1:20004","database":"phonebook","user":"test","secureJsonData":{"password":"test"},"jsonData":{"sslmode":"disable","postgresVersion":1400,"timescaledb":false}}]'
+cat target.yaml | redis-cli -x hset module/postgresql1/metrics_targets postgres
 ```
 
-The JSON must reflect the Grafana datasource configuration.
+Content of the `target.yaml` file:
+```yaml
+- targets:
+  - 10.5.4.1:9187
+  labels:
+    module_id: postresql1
+```
 
-#### metrics-dashboard-changed
+The JSON configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
+
+
+### Provisioning Grafana
+
+The Grafana service is configured to load all datasources and dashboards from the `datasources` and `dashboards` directories.
+The service must be restarted when a new datasource or dashboard is added or removed.
+
+### Dashboards
+
+Dashboards are defined in JSON format. The module provides 2 types of dashboards:
+- core dashboards: these dashboards are bundled inside the module in the `imageroot/etc/dashboards` directory.
+  Such dashboards are copied inside the `dashboards/core` directory when the Grafana service is started.
+- module dashboards: these dashboards are created by other modules, the configuration is stored inside the Redis DB.
+  When a module wants to add a new dashboard, it must use the `metrics-dashboard-changed` event.
+  Such dashboards are saved inside the `dashboards/modules` directory.
+
+##### metrics-dashboard-changed
 
 The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_dashboards`.
 The key is an hash containing the following fields:
-- `<name>`: a name for the dashboard
-- `<json_config>`: the JSON configuration for the dashboard
+- key `<name>`, a name for the dashboard
+- value `<json_config>`, the JSON configuration for the dashboard
 
 Each dashboard will be saved on a file inside the `dashboards` directory, named like `provision_<module_id>_<name>.json`.
-`<module_id>_<name>.json`.
 
 Example of a dashboard configuration for the `postgresql1` module:
 ```
 cat dashboard.json |  redis-cli -x hset module/postgresql1/metrics_dashboards phonebook
 ```
 
-#### metrics-target-changed
+**Note**: if multiple modules define the a dashboard with the same uid, only the first one will be used.
 
-The `reload_configuration` script will search for the following key: `module/<module_id>/metrics_targets`.
-The key is an hash containing the following fields:
-- `<name>`: a name for the target
-- `<json_config>`: the JSON configuration for the target
+### Datasources
 
-Example of a target configuration for the `postgresql1` module in JSON format:
+Datatsources are defined in YAML format and can be added by other modules.
+When a module wants to add a new datasource, it must use the `metrics-datasource-changed` event.
+
+##### metrics-datasource-changed event
+
+The `provision-grafana` script will search for the following key: `module/<module_id>/metrics_datasources`.
+The key is an hash containing the following key-value pairs:
+- key `<name>`, a name for the datasource
+- value `<yaml_config>`, the YAML configuration for the datasource
+
+Each datasource will be saved on a different file inside the `datasources` directory, named like `provision_<module_id>_<name>.json`.
+
+Example of a datasource configuration for the `postgresql1` module:
 ```
-cat target.json | redis-cli -x hset module/postgresql1/metrics_targets postgres
-```
-
-Content of the `target.json` file:
-```json
-[
-  {
-    "targets": [
-      "10.5.4.1:9187"
-    ],
-    "labels": {
-      "module_id": "postresql1"
-    }
-  }
-]
+cat datasource.yml | redis-cli -x hset module/postgresql1/metrics_datasources samba_audit
 ```
 
-The JSON configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
-`<module_id>_<name>.json`.
+The YAML must reflect the Grafana datasource configuration, see this [example](https://grafana.com/docs/grafana/latest/datasources/postgres/configure/#provision-the-data-source) for Postgres.
+
+Example of a datasource configuration for the `postgresql1` module in YAML format:
+```yaml
+apiVersion: 1
+datasources:
+- name: SambaAudit
+  type: postgres
+  url: 10.5.4.1:20004
+  user: smbaudit_reader
+  secureJsonData:
+    password: smbauditpass
+  jsonData:
+    database: samba_audit
+    sslmode: disable
+    maxOpenConns: 100
+    maxIdleConns: 100
+    maxIdleConnsAuto: true
+    connMaxLifetime: 14400
+    postgresVersion: 14000
+    timescaledb: false
+```
 
 ## Testing
 

@@ -6,5 +6,5 @@
 #
 
 # reload the smarthost configuration
-reload_configuration
+provision-prometheus
 systemctl --user try-restart alertmanager.service
