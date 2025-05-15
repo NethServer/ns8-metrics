@@ -182,29 +182,23 @@ When a module wants to add a new target, it must use the `metrics-target-changed
 The `reload_configuration` script will search for the following key: `module/<module_id>/metrics_targets`.
 The key is an hash containing the following fields:
 - key `<name>`, a name for the target
-- value `<json_config>`, the JSON configuration for the target
+- value `<yaml_config>`, the YAML configuration for the target
 
 Example of a target configuration for the `postgresql1` module in JSON format:
 ```
-cat target.json | redis-cli -x hset module/postgresql1/metrics_targets postgres
+cat target.yaml | redis-cli -x hset module/postgresql1/metrics_targets postgres
 ```
 
-Content of the `target.json` file:
-```json
-[
-  {
-    "targets": [
-      "10.5.4.1:9187"
-    ],
-    "labels": {
-      "module_id": "postresql1"
-    }
-  }
-]
+Content of the `target.yaml` file:
+```yaml
+- targets:
+  - 10.5.4.1:9187
+  labels:
+    module_id: postresql1
 ```
 
 The JSON configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
-`<module_id>_<name>.json`.
+
 
 ### Provisioning Grafana
 

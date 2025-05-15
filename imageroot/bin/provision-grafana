@@ -6,6 +6,7 @@
 #
 
 import os
+import sys
 import agent
 import json
 import yaml
@@ -77,8 +78,8 @@ for module in rdb.scan_iter("module/*/metrics_datasources"):
     for ds_key, ds_val in datasources.items():
         try:
             data = yaml.safe_load(ds_val)
-        except:
-            print(f"Skpping datasouce {ds_key} for {module_id}: invalid YAML")
+        except Exception as ex:
+            print(f"Skipped datasource {ds_key} for {module_id}: {ex}", file=sys.stderr)
             continue
         # write out as YAML without sorting keys
         filename = f"datasources/provision_{module_id}_{ds_key}.yml"

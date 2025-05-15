@@ -91,7 +91,11 @@ def validate_and_generate_provider_configs(redis_client):
         module_id = module.split('/')[1]
         targets = redis_client.hgetall(module)
         for db_key, db_val in targets.items():
-            data = json.loads(db_val)
+            try:
+                data = yaml.safe_load(db_val)
+            except Exception as ex:
+                print(f"Skipped target {db_key} for module {module_id}: {ex}", file=sys.stderr)
+                continue
             filename = f"prometheus.d/provision_{module_id}_{db_key}.yml"
             with open(filename, 'w') as fp:
                  yaml.safe_dump(data, fp, sort_keys=False)
