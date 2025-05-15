@@ -34,15 +34,17 @@ Check if grafana is running
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
 
-
-Check if prometheus is accessible from Traefik
-    ${rc} =    Execute Command    sleep 10 && curl -f http://127.0.0.1/prometheus/
+Check if Grafana is accessible from Traefik with basic auth
+    ${rc} =    Execute Command    sleep 10 && curl -f -Lk http://admin:Nethesis,1234@127.0.0.1/grafana/
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
 
+Check if Prometheus is accessible from Traefik with basic auth
+    ${rc} =    Execute Command    sleep 10 && curl -f -Lk http://admin:Nethesis,1234@127.0.0.1/prometheus/
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
 
-
-Check if t is removed correctly
+Check if it is removed correctly
     ${rc} =    Execute Command    remove-module --no-preserve ${module_id}
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
