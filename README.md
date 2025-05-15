@@ -188,7 +188,6 @@ The key is an hash containing the following fields:
 - `<json_config>`: the JSON configuration for the datasource
 
 Each datasource will be saved on a different file inside the `datasources` directory, named like `provision_<module_id>_<name>.json`.
-`<module_id>_<name>.json`.
 
 Example of a datasource configuration for the `postgresql1` module:
 ```
