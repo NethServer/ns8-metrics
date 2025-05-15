@@ -218,6 +218,7 @@ Dashboards are defined in JSON format. The module provides 2 types of dashboards
   Such dashboards are copied inside the `dashboards/core` directory when the Grafana service is started.
 - module dashboards: these dashboards are created by other modules, the configuration is stored inside the Redis DB.
   When a module wants to add a new dashboard, it must use the `metrics-dashboard-changed` event.
+  Such dashboards are saved inside the `dashboards/modules` directory.
 
 ##### metrics-dashboard-changed
 
