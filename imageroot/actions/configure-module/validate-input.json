@@ -7,7 +7,9 @@
         {
             "prometheus_path": "prometheus",
             "grafana_path": "grafana",
-            "mail_to": [ "alert@nethserver.org" ],
+            "mail_to": [
+                "alert@nethserver.org"
+            ],
             "mail_from": "no-reply@nethserver.org",
             "mail_template": "custom_mail"
         }
@@ -21,7 +23,8 @@
         "prometheus_path": {
             "type": "string",
             "description": "Path to access prometheus interface, like 'prometheus'. Prometheus will be available at https://<hostname>/<prometheus_path>. If empty, prometheus will not be accessible.",
-            "format": "string"        },
+            "format": "string"
+        },
         "grafana_path": {
             "type": "string",
             "description": "Path to access grafana interface, like 'grafana'. Grafana will be available at https://<hostname>/<grafana_path>. If empty, grafana will not run.",
@@ -47,4 +50,3 @@
         }
     }
 }
-

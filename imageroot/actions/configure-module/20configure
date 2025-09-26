@@ -20,8 +20,9 @@ def save_config(request):
 
 request = json.load(sys.stdin)
 
-prometheus_path = request.get('prometheus_path')
-grafana_path = request.get('grafana_path')
+prometheus_path = request.get('prometheus_path', '').strip('/')
+grafana_path = request.get('grafana_path', '').strip('/')
+http_basic_auth_url = f"http://127.0.0.1:9311/api/module/{os.environ['MODULE_ID']}/http-basic/authorize-metrics"
 
 save_config(request.copy())
 
@@ -37,8 +38,7 @@ if prometheus_path:
             'http2https': True,
             'path': f'/{prometheus_path}',
             "forward_auth": {
-                "address": "http://127.0.0.1:9311/api/module/metrics1/http-basic/authorize-metrics",
-                "skip_tls_verify": True,
+                "address": http_basic_auth_url,
                 "auth_response_headers": [ "X-Auth-User" ]
             }
         },
@@ -66,8 +66,7 @@ if grafana_path:
             'http2https': True,
             'path': f'/{grafana_path}',
             "forward_auth": {
-                "address": "http://127.0.0.1:9311/api/module/metrics1/http-basic/authorize-metrics",
-                "skip_tls_verify": True,
+                "address": http_basic_auth_url,
                 "auth_response_headers": [ "X-Auth-User" ]
             }
         },
