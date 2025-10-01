@@ -16,13 +16,13 @@ with open('rules.d/nodes.yml', 'w') as f:
 - name: Nodes
   rules:
   - alert: node_offline
-    expr: up{job="providers"} == 0
-    for: 0m
+    expr: up{job="providers",target_type="node"} == 0
+    for: 5m
     labels:
       severity: critical
     annotations:
-      summary: Cluster node offline (instance {{ $labels.instance }})
-      description: "A cluster target has disappeared. An exporter might be crashed.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+      summary: "Cluster node {{ $labels.node }} is offline"
+      description: "The node target has disappeared. This may be caused by a network outage or a software issue, for example if its metric exporter has crashed."
 ''')
 
 # Write the loki.yml file
