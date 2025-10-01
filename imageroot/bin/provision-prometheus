@@ -85,7 +85,12 @@ def validate_and_generate_provider_configs(redis_client):
             file.write('- targets:\n')
             file.write(f"    - '{vpn.get('ip_address')}:9100'\n")
             file.write('  labels:\n')
+            file.write(f"    target_type: node\n")
             file.write(f"    node: {node_id}\n")
+
+    def _decorate_with_target_type_label(data, target_type):
+        for oitem in data:
+            oitem['labels']['target_type'] = target_type
 
     for module in redis_client.scan_iter("module/*/metrics_targets"):
         module_id = module.split('/')[1]
@@ -93,6 +98,7 @@ def validate_and_generate_provider_configs(redis_client):
         for db_key, db_val in targets.items():
             try:
                 data = yaml.safe_load(db_val)
+                _decorate_with_target_type_label(data, db_key)
             except Exception as ex:
                 print(f"Skipped target {db_key} for module {module_id}: {ex}", file=sys.stderr)
                 continue

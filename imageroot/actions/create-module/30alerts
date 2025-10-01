@@ -16,13 +16,28 @@ with open('rules.d/nodes.yml', 'w') as f:
 - name: Nodes
   rules:
   - alert: node_offline
-    expr: up{job="providers"} == 0
-    for: 0m
+    expr: up{job="providers",target_type="node"} == 0
+    for: 3m
     labels:
       severity: critical
     annotations:
       summary: Cluster node offline (instance {{ $labels.instance }})
       description: "A cluster target has disappeared. An exporter might be crashed.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+''')
+
+# Write the targets.yml file, for targets defined by modules
+with open('rules.d/targets.yml', 'w') as f:
+    f.write(r'''groups:
+- name: Targets
+  rules:
+  - alert: target_offline
+    expr: up{job="providers",target_type!="node"} == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: Target {{ $labels.target_type }} of {{ $labels.module_id }} is offline
+      description: "A module target has disappeared. Its metric exporter might be crashed, or node {{ $labels.node }} is offline."
 ''')
 
 # Write the loki.yml file
