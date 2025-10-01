@@ -25,21 +25,6 @@ with open('rules.d/nodes.yml', 'w') as f:
       description: "The node target has disappeared. This may be caused by a network outage or a software issue, for example if its metric exporter has crashed."
 ''')
 
-# Write the targets.yml file, for targets defined by modules
-with open('rules.d/targets.yml', 'w') as f:
-    f.write(r'''groups:
-- name: Targets
-  rules:
-  - alert: target_offline
-    expr: up{job="providers",target_type!="node"} == 0
-    for: 5m
-    labels:
-      severity: critical
-    annotations:
-      summary: Target {{ $labels.target_type }} of {{ $labels.module_id }} is offline
-      description: "A module target has disappeared. Its metric exporter might be crashed, or node {{ $labels.node }} is offline."
-''')
-
 # Write the loki.yml file
 with open('rules.d/loki.yml', 'w') as f:
     f.write('''groups:
