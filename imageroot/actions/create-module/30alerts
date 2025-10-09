@@ -111,7 +111,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
 - name: TLS certificates
   rules:
   - alert: certexp
-    expr: 7d <= (traefik_tls_certs_not_after - time()) < 28d
+    expr: 7d <= (max by (cn, sans) (traefik_tls_certs_not_after) - time()) < 28d
     for: 5m
     labels:
       severity: warning
@@ -122,7 +122,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
         on Node {{ $labels.node }} expires in less than 28 days. It must be renewed, or
         removed from the TLS certificates page.
   - alert: certexp
-    expr: 0 < (traefik_tls_certs_not_after - time()) < 7d
+    expr: 0 < (max by (cn, sans) (traefik_tls_certs_not_after) - time()) < 7d
     for: 5m
     labels:
       severity: critical
@@ -133,7 +133,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
         on Node {{ $labels.node }} expires in less than 7 days. It must be renewed, or
         removed from the TLS certificates page.
   - alert: certexp
-    expr: (time() - traefik_tls_certs_not_after) > 0
+    expr: (time() - max by (cn, sans) (traefik_tls_certs_not_after)) > 0
     for: 5m
     labels:
       severity: critical
