@@ -2,5 +2,13 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "local>NethServer/.github:ns8"
+  ],
+  "packageRules": [
+    {
+      "matchPackageNames": ["prometheus/prometheus"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "LTS updates",
+      "automerge": true
+    }
   ]
 }
