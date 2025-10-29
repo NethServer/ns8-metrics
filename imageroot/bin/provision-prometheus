@@ -79,7 +79,8 @@ def validate_and_generate_provider_configs(redis_client):
     for nkey in redis_client.scan_iter("node/*/vpn"):
         node_id = nkey.split('/')[1]
         vpn = redis_client.hgetall(nkey)
-
+        if redis_client.sismember(f"node/{node_id}/flags", "nomodules"):
+            continue # skip ns7 migration node
         # Generate configuration file
         with open(f"prometheus.d/node_{node_id}.yml", 'w', encoding='utf-8') as file:
             file.write('- targets:\n')
@@ -109,8 +110,10 @@ def validate_and_generate_provider_configs(redis_client):
 def clean_up_old_provider_configs(redis_client):
     nodes = []
     for nkey in redis_client.scan_iter("node/*/vpn"):
-        nodes.append(f"node_{nkey.split('/')[1]}.yml")
-    
+        node_id = nkey.split('/')[1]
+        if redis_client.sismember(f"node/{node_id}/flags", "nomodules"):
+            continue # skip ns7 migration node
+        nodes.append(f"node_{node_id}.yml")
     # Search for all node_*.yml files, delete the ones that are not in the nodes list
     with os.scandir('prometheus.d') as it:
         for entry in it:
