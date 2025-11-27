@@ -4,11 +4,16 @@ Library           DateTime
 
 *** Variables ***
 ${SSH_KEYFILE}    %{HOME}/.ssh/id_ecdsa
+${NODE_ADDR}      10.5.4.1
+${JOURNAL_SINCE}  0
+${SCENARIO}       install
+${IMAGE_URL}      ghcr.io/nethserver/metrics:latest
 
 *** Settings ***
 Suite Setup       Run Keywords
 ...                    Connect to the Node
 ...                    Save the journal begin timestamp
+...                    Update to testing version
 
 Suite Teardown    Run Keywords
 ...                    Collect the suite journal
@@ -28,3 +33,10 @@ Save the journal begin timestamp
 Collect the suite journal
     Execute Command    journalctl -S @${JOURNAL_SINCE} >journal-dump.log
     Get File    journal-dump.log    ${OUTPUT DIR}/journal-${SUITE NAME}.log
+
+Update to testing version
+    Log To Console    SCENARIO ${SCENARIO}
+    IF    r'${SCENARIO}' == 'update'
+        ${out}  ${rc} =  Execute Command  api-cli run update-module --data '{"force":true,"module_url":"${IMAGE_URL}","instances":["metrics1"]}'  return_rc=${True}
+        Should Be Equal As Integers  ${rc}  0  action update-module ${IMAGE_URL} failed
+    END
