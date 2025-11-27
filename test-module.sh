@@ -5,38 +5,40 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-set -e
+set -e -a
 
-LEADER_NODE=$1
-IMAGE_URL=$2
-shift 2
 SSH_KEYFILE=${SSH_KEYFILE:-$HOME/.ssh/id_rsa}
 
+LEADER_NODE="${1:?missing LEADER_NODE argument}"
+IMAGE_URL="${2:?missing IMAGE_URL argument}"
+shift 2
+
 ssh_key="$(< $SSH_KEYFILE)"
+venvroot=/usr/local/venv
 
-cleanup() {
-    set +e
-    podman cp rf-core-runner:/home/pwuser/outputs tests/
-    podman stop rf-core-runner
-    podman rm rf-core-runner
-}
-
-trap cleanup EXIT
 podman run -i \
-    --network=host \
-    -v .:/home/pwuser/ns8-module:z \
-    --volume=site-packages:/home/pwuser/.local/lib/python3.8/site-packages:Z \
-    --name rf-core-runner ghcr.io/marketsquare/robotframework-browser/rfbrowser-stable:19.1.1 \
-    bash -l -s <<EOF
+    --volume=.:/srv/source:z \
+    --volume=rftest-cache:${venvroot}:z \
+    --replace --name=rftest \
+    --env=ssh_key \
+    --env=venvroot \
+    --env=LEADER_NODE \
+    --env=IMAGE_URL \
+    docker.io/python:3.11-alpine \
+    ash -l -s -- "${@}" <<'EOF'
 set -e
-echo "$ssh_key" > /home/pwuser/ns8-key
-pip install -q -r /home/pwuser/ns8-module/tests/pythonreq.txt
-mkdir ~/outputs
-cd /home/pwuser/ns8-module
-exec robot -v NODE_ADDR:${LEADER_NODE} \
+echo "$ssh_key" > /tmp/idssh
+if [ ! -x ${venvroot}/bin/robot ] ; then
+    python3 -mvenv ${venvroot} --upgrade
+    ${venvroot}/bin/pip3 install -q -r /srv/source/tests/pythonreq.txt
+fi
+cd /srv/source
+mkdir -vp tests/outputs/
+exec ${venvroot}/bin/robot \
+    -v NODE_ADDR:${LEADER_NODE} \
     -v IMAGE_URL:${IMAGE_URL} \
-    -v SSH_KEYFILE:/home/pwuser/ns8-key \
+    -v SSH_KEYFILE:/tmp/idssh \
     --name metrics \
     --skiponfailure unstable \
-    -d ~/outputs ${@} /home/pwuser/ns8-module/tests/
+    -d tests/outputs "${@}" tests/
 EOF
