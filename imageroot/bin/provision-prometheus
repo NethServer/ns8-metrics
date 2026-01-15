@@ -49,20 +49,9 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
 }
 
 def generate_prometheus_config(redis_client):
-    loki = redis_client.get("cluster/default_instance/loki")
-    logcli = redis_client.hgetall(f'module/{loki}/environment')
-    # we want to build the loki address
-    logcli["LOKI_ADDR"] = logcli["LOKI_ADDR"] + ':' + logcli["LOKI_HTTP_PORT"]
-
     with open('prometheus.yml', 'w', encoding='utf-8') as fp:
         fp.write("global:\n")
         fp.write("scrape_configs:\n")
-        fp.write('  - job_name: "loki"\n')
-        fp.write('    basic_auth:\n')
-        fp.write(f'      username: "{logcli["LOKI_API_AUTH_USERNAME"]}"\n')
-        fp.write(f'      password: "{logcli["LOKI_API_AUTH_PASSWORD"]}"\n')
-        fp.write('    static_configs:\n')
-        fp.write(f'      - targets: ["{logcli["LOKI_ADDR"].removeprefix("http://")}"]\n')
         fp.write('  - job_name: "providers"\n')
         fp.write('    file_sd_configs:\n')
         fp.write('      - files:\n')
