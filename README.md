@@ -51,7 +51,7 @@ Launch `configure-module`, by setting the following parameters:
 
 Example:
 
-    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_to": ["alert@nethserver.org"], "mail_from": "no-reply@nethserver.org", "mail_template": ""}'
+    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_to": ["alert@example.org"], "mail_from": "no-reply@example.org", "mail_template": ""}'
 
 You can send a test alert to verify the mail configuration:
 
@@ -162,7 +162,7 @@ redis-cli -x hset module/metrics1/custom_templates myalert <myalert.tmpl
 
 Configure the module to use the new template:
 ```
-api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_from": "no-reply@nethserver.org", "mail_to": ["alert@nethserver.org"], "mail_template": "myalert"}'
+api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_from": "no-reply@example.org", "mail_to": ["alert@example.org"], "mail_template": "myalert"}'
 ```
 
 You can test the template rendering using the following command:
