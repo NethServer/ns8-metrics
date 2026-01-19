@@ -206,6 +206,10 @@ def generate_custom_alertmanager_templates(redis_client):
 # connect to client and fetch providers for prometheus
 redis_client = agent.redis_connect(use_replica=True)
 
+# This script can run before create-module, as event
+# handler. Ensure required dir exists:
+os.makedirs("prometheus.d", exist_ok=True)
+
 # Generate providers configuration
 clean_up_old_provisioned_targets(redis_client)
 generate_prometheus_config(redis_client)
