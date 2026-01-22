@@ -47,9 +47,7 @@ with open('rules.d/memory.yml', 'w') as f:
 - name: Memory
   rules:
   - alert: swap_full
-    expr: >
-      ((1 - (node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes)) * 100 > 80)
-      and (rate(node_vmstat_pswpin[4m]) > 1)
+    expr: ((1 - (node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes)) * 100 > 80)
     for: 2m
     labels:
       severity: warning
