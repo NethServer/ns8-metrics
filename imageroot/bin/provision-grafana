@@ -11,7 +11,25 @@ import agent
 import json
 import yaml
 import shutil
+import configparser
 from collections import OrderedDict
+
+# Ensure grafana.ini disables the internal login form and basic auth so that
+# authentication is exclusively handled by the Traefik proxy (X-AUTH-USER header).
+# This block runs at every Grafana startup, fixing both new and existing installs.
+grafana_ini_path = '../etc/grafana.ini'
+gcfg = configparser.RawConfigParser()
+gcfg.read(grafana_ini_path)
+changed = False
+for section, key, value in [('auth', 'disable_login_form', 'true'), ('auth.basic', 'enabled', 'false')]:
+    if not gcfg.has_section(section):
+        gcfg.add_section(section)
+    if gcfg.get(section, key, fallback=None) != value:
+        gcfg.set(section, key, value)
+        changed = True
+if changed:
+    with open(grafana_ini_path, 'w') as fp:
+        gcfg.write(fp)
 
 # Read prometheus leader node
 rdb = agent.redis_connect(use_replica=True)
