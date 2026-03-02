@@ -26,7 +26,7 @@ Check if module can be configured
 
 Check if grafana is running
     Wait Until Keyword Succeeds    10    1s
-    ...    HTTP GET has status 200    http://127.0.0.1:3000/
+    ...    HTTP GET has status 200    http://127.0.0.1:3000/grafana/login
 
 Check if Grafana is accessible from Traefik with basic auth
     Wait Until Keyword Succeeds    30    1s
