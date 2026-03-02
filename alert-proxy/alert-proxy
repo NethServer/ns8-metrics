@@ -112,5 +112,5 @@ if __name__ == '__main__':
         web.get('/', handle_get),
         web.post('/', handle_post_request)
     ])
-    web.run_app(app, port=9095, print=print("alert-proxy server started", file=sys.stderr))
+    web.run_app(app, host='127.0.0.1', port=9095, print=print("alert-proxy server started", file=sys.stderr))
     
