@@ -56,7 +56,7 @@ with open('datasources/local.yml', 'w') as fp:
     fp.write('    type: prometheus\n')
     fp.write('    uid: prometheus\n')
     fp.write('    access: proxy\n')
-    fp.write(f'    url: http://cluster-leader:9091/{prometheus_path}\n')
+    fp.write(f'    url: http://127.0.0.1:9091/{prometheus_path}\n')
     fp.write('    jsonData:\n')
     fp.write('      timeInterval: 1m\n')
 
@@ -72,7 +72,7 @@ with open('datasources/local.yml', 'w') as fp:
 
     fp.write('  - name: Alertmanager\n')
     fp.write('    type: alertmanager\n')
-    fp.write('    url: http://cluster-leader:9093\n')
+    fp.write('    url: http://127.0.0.1:9093\n')
     fp.write('    access: proxy\n')
     fp.write('    jsonData:\n')
     fp.write('      implementation: prometheus\n')

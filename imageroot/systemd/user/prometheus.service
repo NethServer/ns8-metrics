@@ -24,7 +24,7 @@ ExecStart=/usr/bin/podman run \
     --volume=./prometheus.d/:/prometheus/prometheus.d/:z \
     --volume=./rules.d/:/prometheus/rules.d/:z \
     --volume=prometheus-data:/prometheus:z \
-    ${PROMETHEUS_IMAGE} --web.external-url=/${PROMETHEUS_PATH}/ --web.listen-address=:9091
+    ${PROMETHEUS_IMAGE} --web.external-url=/${PROMETHEUS_PATH}/ --web.listen-address=127.0.0.1:9091
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/prometheus.ctr-id -t 10
 ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/prometheus.ctr-id
 PIDFile=%t/prometheus.pid
