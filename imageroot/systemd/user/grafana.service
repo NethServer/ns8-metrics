@@ -26,6 +26,7 @@ ExecStart=/usr/bin/podman run \
     --volume=%S/etc/grafana.ini:/etc/grafana/grafana.ini:z \
     -e GF_SERVER_SERVE_FROM_SUB_PATH=true \
     -e GF_SERVER_ROOT_URL=/${GRAFANA_PATH} \
+    -e GF_SERVER_ADDR=127.0.0.1 \
     ${GRAFANA_IMAGE}
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/grafana.ctr-id -t 10
 ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/grafana.ctr-id
