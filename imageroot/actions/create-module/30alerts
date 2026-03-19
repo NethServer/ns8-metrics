@@ -96,7 +96,7 @@ with open('rules.d/disk.yml', 'w') as f:
       severity: critical
     annotations:
       summary: Host software RAID insufficient drives (instance {{ $labels.instance }})
-      description: "MD RAID array {{ $labels.device }} on {{ $labels.instance }} has insufficient drives remaining.\n  VALUE = {{ $value }}\n  LABELS = {{ $labels }}"
+      description: "MD RAID array {{ $labels.device }} on {{ $labels.instance }} has insufficient drives remaining.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
 ''')
 
 # Write the backup.yml file
