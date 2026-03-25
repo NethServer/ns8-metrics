@@ -102,7 +102,7 @@ with open('rules.d/backup.yml', 'w') as f:
       severity: critical
     annotations:
       summary: "Backup failed"
-      description: "The backup {name} ({id}) has failed."
+      description: "The backup {{ $labels.name }} ({{ $labels.id }}) has failed."
 ''')
 
 # Write the tlscert.yml file
