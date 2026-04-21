@@ -10,6 +10,7 @@ import aiohttp
 import json
 import sys
 import os
+import base64
 from aiohttp import web
 
 # Alarm states
@@ -23,6 +24,9 @@ auth_token = os.environ.get("NMON_ALERT_AUTH_TOKEN")
 alert_provider = os.environ.get("NMON_ALERT_PROVIDER")
 system_id = os.environ.get("NMON_ALERT_SYSTEM_ID")
 dartagnan_url = os.environ.get("NMON_DARTAGNAN_URL")
+mimir_url = os.environ.get("MIMIR_URL")
+mimir_auth_user = os.environ.get("MIMIR_AUTH_USER")
+mimir_auth_password = os.environ.get("MIMIR_AUTH_PASSWORD")
 
 async def send_alert(url, value, alert, retry=3):
     if value == CLEAR:
@@ -66,29 +70,76 @@ async def raise_alert(value, alert):
     elif alert_provider == 'nscom':
         await send_alert(f'{dartagnan_url}/machine/alerts/store', value, alert)
 
+async def forward_to_mimir(alerts):
+    if not mimir_url or not mimir_auth_user or not mimir_auth_password:
+        return
+
+    try:
+        credentials = base64.b64encode(f"{mimir_auth_user}:{mimir_auth_password}".encode()).decode()
+        headers = {'Authorization': f'Basic {credentials}', 'Content-Type': 'application/json'}
+
+        ctimeout = aiohttp.ClientTimeout(total=60.0, connect=50, sock_connect=40, sock_read=10)
+        async with aiohttp.ClientSession(timeout=ctimeout) as cs:
+            await cs.post(mimir_url, json=alerts, headers=headers)
+        print(f"Forwarded {len(alerts)} alerts to Mimir", file=sys.stderr)
+    except Exception as ex:
+        print(f"Failed to forward alerts to Mimir: {str(ex)}", file=sys.stderr)
+
 async def handle_post_request(request):
-    # Convert alertsmanager alerts into my alert format
     try:
         data = await request.json()
         print("Received alert:", json.dumps(data), file=sys.stderr)
         alerts = data.get('alerts', [])
+
+        # Forward alerts to Mimir if configured
+        if mimir_url:
+            await forward_to_mimir(alerts)
+
+        # Convert alertsmanager alerts into my alert format
         for alert in alerts:
             status = alert.get('status')
             labels = alert.get('labels', {})
             node_id = labels.get('node', 'unknown')
-            # Remap to my alert id format
             alert_name = labels.get('alertname', 'unknown')
-            if alert_name == 'disk_full':
+
+            # Remap UpperCamelCase alert names to internal alert id format
+            if alert_name == 'DiskSpaceLow':
+                mountpoint = labels.get('mountpoint')
+                if mountpoint:
+                    dir = os.path.basename(mountpoint)
+                    alert_id = f'disk-low:{dir}:node:{node_id}'
+                else:
+                    alert_id = f'disk-low:{labels.get("device", "unknown")}:node:{node_id}'
+            elif alert_name == 'DiskSpaceCritical':
                 mountpoint = labels.get('mountpoint')
                 if mountpoint:
                     dir = os.path.basename(mountpoint)
                     alert_id = f'disk-full:{dir}:node:{node_id}'
                 else:
-                    alert_id = f'disk_:{labels.get('device')}:node:{node_id}'
-            elif alert_name == 'swap_full':
+                    alert_id = f'disk:{labels.get("device", "unknown")}:node:{node_id}'
+            elif alert_name == 'SwapFull':
                 alert_id = f'swap:node:{node_id}'
+            elif alert_name == 'SwapNotPresent':
+                alert_id = f'swap-notpresent:node:{node_id}'
+            elif alert_name == 'RaidDiskFailed':
+                alert_id = f'raid-disk-failed:{labels.get("device", "unknown")}:node:{node_id}'
+            elif alert_name == 'RaidDriveMissing':
+                alert_id = f'raid-drive-missing:{labels.get("device", "unknown")}:node:{node_id}'
+            elif alert_name == 'BackupFailed':
+                alert_id = f'backup-failed:{labels.get("name", "unknown")}:node:{node_id}'
+            elif alert_name == 'NodeOffline':
+                alert_id = f'node-offline:node:{node_id}'
+            elif alert_name == 'LokiOffline':
+                alert_id = f'loki-offline:node:{node_id}'
+            elif alert_name == 'CertExpiringSoon':
+                alert_id = f'cert-expiring-soon:{labels.get("cn", "unknown")}:node:{node_id}'
+            elif alert_name == 'CertExpiringCritical':
+                alert_id = f'cert-expiring-critical:{labels.get("cn", "unknown")}:node:{node_id}'
+            elif alert_name == 'CertExpired':
+                alert_id = f'cert-expired:{labels.get("cn", "unknown")}:node:{node_id}'
             else:
-                alert_id = f"{alert_name.replace('_', ':')}:{node_id}"
+                alert_id = f"{alert_name.lower().replace('_', '-')}:node:{node_id}"
+
             if status == 'firing':
                 value = CRITICAL
             elif status == 'resolved':

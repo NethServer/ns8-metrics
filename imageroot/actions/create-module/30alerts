@@ -15,14 +15,16 @@ with open('rules.d/nodes.yml', 'w') as f:
     f.write('''groups:
 - name: Nodes
   rules:
-  - alert: node_offline
+  - alert: NodeOffline
     expr: up{job="providers",target_type="node"} == 0
     for: 5m
     labels:
       severity: critical
     annotations:
-      summary: "Cluster node {{ $labels.node }} is offline"
-      description: "The node target has disappeared. This may be caused by a network outage or a software issue, for example if its metric exporter has crashed."
+      summary_en: "Cluster node {{ $labels.node }} is offline"
+      summary_it: "Nodo cluster {{ $labels.node }} è offline"
+      description_en: "The node  {{ $labels.node }} has disappeared. This may be caused by a network outage or a software issue, for example if its metric exporter has crashed."
+      description_it: "Il nodo {{ $labels.node }} è scomparso. Potrebbe essere causato da un'interruzione di rete o da un problema software."
 ''')
 
 # Write the loki.yml file
@@ -30,15 +32,18 @@ with open('rules.d/loki.yml', 'w') as f:
     f.write('''groups:
 - name: Loki
   rules:
-  - alert: loki_offline
+  - alert: LokiOffline
     expr: up{job="loki"} == 0
     for: 0m
     labels:
       severity: warning
+      service: loki
       node: ''' + os.getenv("NODE_ID") + '''
     annotations:
-      summary: Loki instance {{ $labels.instance }} is down
-      description: "Loki is stopped or is not running properly.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+      summary_en: "Loki instance {{ $labels.instance }} is down (node {{ $labels.node }})"
+      summary_it: "Istanza Loki {{ $labels.instance }} è offline (nodo {{ $labels.node }})"
+      description_en: "Loki is stopped or is not running properly on node {{ $labels.node }}."
+      description_it: "Loki è arrestato o non funziona correttamente sul nodo {{ $labels.node }}."
 ''')
 
 # Write the memory.yml file
@@ -46,23 +51,27 @@ with open('rules.d/memory.yml', 'w') as f:
     f.write('''groups:
 - name: Memory
   rules:
-  - alert: swap_full
+  - alert: SwapFull
     expr: ((1 - (node_memory_SwapFree_bytes / node_memory_SwapTotal_bytes)) * 100 > 80)
     for: 10m
     labels:
       severity: warning
     annotations:
-      summary: Host swap is filling up (instance {{ $labels.instance }})
-      description: "Swap is filling up (>80%)\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+      summary_en: "Host swap is filling up (node {{ $labels.node }})"
+      summary_it: "Lo spazio swap si sta riempiendo (nodo {{ $labels.node }})"
+      description_en: "Swap is filling up (>80%) on node {{ $labels.node }}. Current value: {{ $value }}%"
+      description_it: "Lo spazio swap si sta riempiendo (>80%) sul nodo {{ $labels.node }}. Valore attuale: {{ $value }}%"
 
-  - alert: swap_notpresent
+  - alert: SwapNotPresent
     expr: node_memory_SwapTotal_bytes == 0
     for: 0m
     labels:
       severity: critical
     annotations:
-      summary: Swap not configured (instance {{ $labels.instance }})
-      description: "Swap is not configured on this host.\\n "
+      summary_en: "Swap not configured (node {{ $labels.node }})"
+      summary_it: "Swap non configurato (nodo {{ $labels.node }})"
+      description_en: "Swap is not configured on node {{ $labels.node }}."
+      description_it: "Lo swap non è configurato sul nodo {{ $labels.node }}."
 ''')
 
 
@@ -71,32 +80,53 @@ with open('rules.d/disk.yml', 'w') as f:
     f.write('''groups:
 - name: Disk
   rules:
-  - alert: disk_full
+  - alert: DiskSpaceLow
+    expr: (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .20 and node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes >= .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
+    for: 5m
+    labels:
+      severity: warning
+      service: storage
+    annotations:
+      summary_en: "Disk usage on {{ $labels.mountpoint }} is above 80% (node {{ $labels.node }})"
+      summary_it: "Utilizzo disco su {{ $labels.mountpoint }} superiore all'80% (nodo {{ $labels.node }})"
+      description_en: "Disk space is filling up on {{ $labels.mountpoint }} on node {{ $labels.node }}. Free space is limited: {{ $value | humanize }}B"
+      description_it: "Lo spazio disco si sta riempiendo su {{ $labels.mountpoint }} sul nodo {{ $labels.node }}. Lo spazio libero è limitato: {{ $value | humanize }}B"
+
+  - alert: DiskSpaceCritical
     expr: (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
     for: 2m
     labels:
-      severity: warning
+      severity: critical
+      service: storage
     annotations:
-      summary: Host out of disk space (instance {{ $labels.instance }})
-      description: "Disk is almost full (< 10% left)\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+      summary_en: "Disk usage on {{ $labels.mountpoint }} is above 90% (node {{ $labels.node }})."
+      summary_it: "Utilizzo disco su {{ $labels.mountpoint }} superiore al 90% (nodo {{ $labels.node }})."
+      description_en: "Disk is almost full (< 10% left) on {{ $labels.mountpoint }} on node {{ $labels.node }}. Free space: {{ $value | humanize }}B. Immediate action is required to free up space or add more storage."
+      description_it: "Il disco è quasi pieno (< 10% disponibile) su {{ $labels.mountpoint }} sul nodo {{ $labels.node }}. Spazio libero: {{ $value | humanize }}B. È richiesta un'azione immediata per liberare spazio o aggiungere ulteriore storage."
 
-  - alert: md_failure
+  - alert: RaidDiskFailed
     expr: (node_md_disks{state="failed"} > 0)
     for: 2m
     labels:
       severity: critical
+      service: storage
     annotations:
-      summary: Host software RAID disk failure (instance {{ $labels.instance }})
-      description: "MD RAID array {{ $labels.device }} on node {{ $labels.node }} needs attention.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+      summary_en: "Host software RAID disk failure (node {{ $labels.node }})"
+      summary_it: "Guasto disco RAID software (nodo {{ $labels.node }})"
+      description_en: "MD RAID array {{ $labels.device }} on node {{ $labels.node }} has a failed disk. Immediate attention required."
+      description_it: "L'array RAID {{ $labels.device }} sul nodo {{ $labels.node }} ha un disco guasto. Attenzione immediata richiesta."
 
-  - alert: md_missing
+  - alert: RaidDriveMissing
     expr: (node_md_disks_required - on(instance, device, node) node_md_disks{state="active"}) > 0
     for: 2m
     labels:
       severity: critical
+      service: storage
     annotations:
-      summary: Host software RAID insufficient drives (instance {{ $labels.instance }})
-      description: "MD RAID array {{ $labels.device }} on node {{ $labels.node }} has insufficient drives remaining.\\n  VALUE = {{ $value }}\\n  LABELS = {{ $labels }}"
+      summary_en: "Host software RAID insufficient drives (node {{ $labels.node }})"
+      summary_it: "Array RAID software con unità insufficienti (nodo {{ $labels.node }})"
+      description_en: "MD RAID array {{ $labels.device }} on node {{ $labels.node }} has insufficient drives remaining."
+      description_it: "L'array RAID {{ $labels.device }} sul nodo {{ $labels.node }} ha un numero insufficiente di unità."
 ''')
 
 # Write the backup.yml file
@@ -104,14 +134,17 @@ with open('rules.d/backup.yml', 'w') as f:
     f.write('''groups:
 - name: Backup
   rules:
-  - alert: backup_failed
+  - alert: BackupFailed
     expr: node_backup_status == 0
     for: 0m
     labels:
       severity: critical
+      service: backup
     annotations:
-      summary: "Backup failed"
-      description: "The backup {{ $labels.name }} ({{ $labels.id }}) has failed."
+      summary_en: "Backup job {{ $labels.name }} (ID: {{ $labels.id }}) has failed."
+      summary_it: "Backup {{ $labels.name }} (ID: {{ $labels.id }}) non riuscito."
+      description_en: "Backup job {{ $labels.name }} (ID: {{ $labels.id }}) has failed and requires attention."
+      description_it: "Il backup {{ $labels.name }} (ID: {{ $labels.id }}) non è riuscito e richiede attenzione."
 ''')
 
 # Write the tlscert.yml file
@@ -119,36 +152,36 @@ with open('rules.d/tlscert.yml', 'w') as f:
     f.write(r'''groups:
 - name: TLS certificates
   rules:
-  - alert: certexp
+  - alert: CertExpiringSoon
     expr: 7d <= (max by (cn, sans) (traefik_tls_certs_not_after) - time()) < 28d
     for: 5m
     labels:
       severity: warning
     annotations:
-      summary: "TLS certificate on Node {{ $labels.node }} expires in {{ $value | humanizeDuration }}"
-      description: >
-        The {{ $labels.module_id }} certificate {{ $labels.cn }} valid for {{ $labels.sans }}
-        on Node {{ $labels.node }} expires in less than 28 days. It must be renewed, or
-        removed from the TLS certificates page.
-  - alert: certexp
+      summary_en: "TLS certificate on Node {{ $labels.node }} expires in {{ $value | humanizeDuration }}"
+      summary_it: "Certificato TLS sul nodo {{ $labels.node }} scade tra {{ $value | humanizeDuration }}"
+      description_en: "The {{ $labels.module_id }} certificate {{ $labels.cn }} on node {{ $labels.node }} expires in less than 28 days. It must be renewed, or removed from the TLS certificates page."
+      description_it: "Il certificato {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} scade tra meno di 28 giorni. Deve essere rinnovato o rimosso dalla pagina dei certificati TLS."
+  
+  - alert: CertExpiringCritical
     expr: 0 < (max by (cn, sans) (traefik_tls_certs_not_after) - time()) < 7d
     for: 5m
     labels:
       severity: critical
     annotations:
-      summary: "TLS certificate on Node {{ $labels.node }} expires in {{ $value | humanizeDuration }}"
-      description: >
-        The {{ $labels.module_id }} certificate {{ $labels.cn }} valid for {{ $labels.sans }}
-        on Node {{ $labels.node }} expires in less than 7 days. It must be renewed, or
-        removed from the TLS certificates page.
-  - alert: certexp
+      summary_en: "TLS certificate on Node {{ $labels.node }} expires in {{ $value | humanizeDuration }}"
+      summary_it: "Certificato TLS sul nodo {{ $labels.node }} scade tra {{ $value | humanizeDuration }}"
+      description_en: "The {{ $labels.module_id }} certificate {{ $labels.cn }} on node {{ $labels.node }} expires in less than 7 days. It must be renewed immediately, or removed from the TLS certificates page."
+      description_it: "Il certificato {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} scade tra meno di 7 giorni. Deve essere rinnovato immediatamente o rimosso dalla pagina dei certificati TLS."
+  
+  - alert: CertExpired
     expr: (time() - max by (cn, sans) (traefik_tls_certs_not_after)) > 0
     for: 5m
     labels:
       severity: critical
     annotations:
-      summary: "TLS certificate on Node {{ $labels.node }} has expired since {{ $value | humanizeDuration }}"
-      description: >
-        The {{ $labels.module_id }} expired certificate {{ $labels.cn }} (also for {{ $labels.sans }})
-        on Node {{ $labels.node }} must be immediately renewed, or removed from the TLS certificates page.
+      summary_en: "TLS certificate on Node {{ $labels.node }} has expired"
+      summary_it: "Certificato TLS sul nodo {{ $labels.node }} è scaduto"
+      description_en: "The {{ $labels.module_id }} expired certificate {{ $labels.cn }} on node {{ $labels.node }} must be immediately renewed or removed from the TLS certificates page."
+      description_it: "Il certificato scaduto {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} deve essere immediatamente rinnovato o rimosso dalla pagina dei certificati TLS."
 ''')

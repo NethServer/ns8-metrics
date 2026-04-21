@@ -15,13 +15,26 @@ osubscription = rdb.hgetall('cluster/subscription')
 node_name = rdb.get(f'node/{os.environ["NODE_ID"]}/ui_name') or f'node/{os.environ["NODE_ID"]}'
 
 if osubscription:
-    agent.write_envfile("alert-proxy.env", {
+    env_vars = {
         "NMON_NODE_NAME": node_name,
-        "NMON_ALERT_AUTH_TOKEN": osubscription["auth_token"],
-        "NMON_ALERT_PROVIDER": osubscription["provider"],
-        "NMON_ALERT_SYSTEM_ID": osubscription["system_id"],
+        "NMON_ALERT_AUTH_TOKEN": osubscription.get("auth_token", ""),
+        "NMON_ALERT_PROVIDER": osubscription.get("provider", ""),
+        "NMON_ALERT_SYSTEM_ID": osubscription.get("system_id", ""),
         "NMON_DARTAGNAN_URL": osubscription.get("dartagnan_url", ""),
-    })
+    }
+
+    # Add Mimir forwarding configuration if available
+    my_url = osubscription.get("my_url", "")
+    my_system_key = osubscription.get("my_system_key", "")
+    my_system_secret = osubscription.get("my_system_secret", "")
+
+    if my_url and my_system_key and my_system_secret:
+        mimir_url = my_url.rstrip('/') + '/collect/api/services/mimir/alertmanager/api/v2/alerts'
+        env_vars["MIMIR_URL"] = mimir_url
+        env_vars["MIMIR_AUTH_USER"] = my_system_key
+        env_vars["MIMIR_AUTH_PASSWORD"] = my_system_secret
+
+    agent.write_envfile("alert-proxy.env", env_vars)
 else:
     print(agent.SD_WARNING + "Could not retrieve subscription information from Redis", file=sys.stderr)
     agent.write_envfile("alert-proxy.env", {})
