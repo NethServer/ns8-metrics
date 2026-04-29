@@ -22,7 +22,7 @@ with open('rules.d/nodes.yml', 'w') as f:
       severity: critical
     annotations:
       summary_en: "Cluster node {{ $labels.node }} is offline"
-      summary_it: "Nodo cluster {{ $labels.node }} è offline"
+      summary_it: "Il nodo cluster {{ $labels.node }} è offline"
       description_en: "The node  {{ $labels.node }} has disappeared. This may be caused by a network outage or a software issue, for example if its metric exporter has crashed."
       description_it: "Il nodo {{ $labels.node }} è scomparso. Potrebbe essere causato da un'interruzione di rete o da un problema software."
 ''')
@@ -41,7 +41,7 @@ with open('rules.d/loki.yml', 'w') as f:
       node: ''' + os.getenv("NODE_ID") + '''
     annotations:
       summary_en: "Loki instance {{ $labels.instance }} is down (node {{ $labels.node }})"
-      summary_it: "Istanza Loki {{ $labels.instance }} è offline (nodo {{ $labels.node }})"
+      summary_it: "L'istanza Loki {{ $labels.instance }} è offline (nodo {{ $labels.node }})"
       description_en: "Loki is stopped or is not running properly on node {{ $labels.node }}."
       description_it: "Loki è arrestato o non funziona correttamente sul nodo {{ $labels.node }}."
 ''')
@@ -142,9 +142,9 @@ with open('rules.d/backup.yml', 'w') as f:
       service: backup
     annotations:
       summary_en: "Backup job {{ $labels.name }} (ID: {{ $labels.id }}) has failed."
-      summary_it: "Backup {{ $labels.name }} (ID: {{ $labels.id }}) non riuscito."
+      summary_it: "Backup {{ $labels.name }} (ID: {{ $labels.id }}) fallito."
       description_en: "Backup job {{ $labels.name }} (ID: {{ $labels.id }}) has failed and requires attention."
-      description_it: "Il backup {{ $labels.name }} (ID: {{ $labels.id }}) non è riuscito e richiede attenzione."
+      description_it: "Il backup {{ $labels.name }} (ID: {{ $labels.id }}) è fallito e richiede attenzione."
 ''')
 
 # Write the tlscert.yml file
@@ -159,7 +159,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
       severity: warning
     annotations:
       summary_en: "TLS certificate on Node {{ $labels.node }} expires in {{ $value | humanizeDuration }}"
-      summary_it: "Certificato TLS sul nodo {{ $labels.node }} scade tra {{ $value | humanizeDuration }}"
+      summary_it: "Il certificato TLS sul nodo {{ $labels.node }} scade tra {{ $value | humanizeDuration }}"
       description_en: "The {{ $labels.module_id }} certificate {{ $labels.cn }} on node {{ $labels.node }} expires in less than 28 days. It must be renewed, or removed from the TLS certificates page."
       description_it: "Il certificato {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} scade tra meno di 28 giorni. Deve essere rinnovato o rimosso dalla pagina dei certificati TLS."
   
@@ -170,7 +170,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
       severity: critical
     annotations:
       summary_en: "TLS certificate on Node {{ $labels.node }} expires in {{ $value | humanizeDuration }}"
-      summary_it: "Certificato TLS sul nodo {{ $labels.node }} scade tra {{ $value | humanizeDuration }}"
+      summary_it: "Il certificato TLS sul nodo {{ $labels.node }} scade tra {{ $value | humanizeDuration }}"
       description_en: "The {{ $labels.module_id }} certificate {{ $labels.cn }} on node {{ $labels.node }} expires in less than 7 days. It must be renewed immediately, or removed from the TLS certificates page."
       description_it: "Il certificato {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} scade tra meno di 7 giorni. Deve essere rinnovato immediatamente o rimosso dalla pagina dei certificati TLS."
   
@@ -181,7 +181,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
       severity: critical
     annotations:
       summary_en: "TLS certificate on Node {{ $labels.node }} has expired"
-      summary_it: "Certificato TLS sul nodo {{ $labels.node }} è scaduto"
+      summary_it: "Il certificato TLS sul nodo {{ $labels.node }} è scaduto"
       description_en: "The {{ $labels.module_id }} expired certificate {{ $labels.cn }} on node {{ $labels.node }} must be immediately renewed or removed from the TLS certificates page."
       description_it: "Il certificato scaduto {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} deve essere immediatamente rinnovato o rimosso dalla pagina dei certificati TLS."
 ''')
