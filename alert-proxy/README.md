@@ -1,7 +1,8 @@
 # alert-proxy
 
 `alert-proxy` is a Python-based web service designed to handle alert notifications. 
-It receives alerts from alertermanagervia HTTP POST requests, processes them, and sends them to a my.nethesis.it or my.nethserver.com.
+It receives alerts from alertermanager via HTTP POST requests, processes them, and sends them to a my.nethesis.it or my.nethserver.com.
+It also supports forwarding alerts directly to a Mimir instance for integration with my.nethesis.it.
 It listens on port `9095`.
 
 Requirements
@@ -16,6 +17,11 @@ The service relies on several environment variables for its configuration:
 - `NMON_ALERT_PROVIDER`: Alert provider (`nsent` or `nscom`).
 - `NMON_ALERT_SYSTEM_ID`: System identifier for the alerts.
 - `NMON_DARTAGNAN_URL`: URL for the Dartagnan service (used if `NMON_ALERT_PROVIDER` is `nscom`).
+- `MIMIR_URL`: (Optional) URL of the Mimir alertmanager API endpoint (e.g., `https://qa.my.nethesis.it/collect/api/services/mimir/alertmanager/api/v2/alerts`).
+- `MIMIR_AUTH_USER`: (Optional) Username for HTTP Basic authentication to Mimir.
+- `MIMIR_AUTH_PASSWORD`: (Optional) Password for HTTP Basic authentication to Mimir.
+
+When all three Mimir environment variables are set, the alert-proxy will forward all received alerts directly to the Mimir instance using HTTP Basic authentication.
 
 ## Endpoints
 
