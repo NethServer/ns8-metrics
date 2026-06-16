@@ -66,38 +66,24 @@ Configuration files are saved inside the state directory. The most important fil
   - templates.d: directory containing custom alert templates
 - local.yml: Grafana configuration, if enabled
 
-### Mimir alerting (my.nethesis.it)
+### Forwarding alerts to my.nethesis.it
 
-Before proceeding, make sure the cluster has already a valid subscription with my.nethesis.it.
+Enterprise (`nsent`) clusters with a valid my.nethesis.it subscription forward
+their alerts automatically, mirroring `send-heartbeat` / `send-inventory` in
+ns8-core. The alert-proxy POSTs alerts to the credential-translation proxy at
+`https://my.nethesis.it/proxy/alerts` using the existing subscription
+credentials (`system_id` / `auth_token`), which the proxy maps to the new my
+credentials before forwarding them to the Mimir alertmanager. No extra
+configuration is required: `write-alert-proxy-envfile` derives everything from
+`cluster/subscription`.
 
-If the cluster subscription includes Mimir integration credentials, alerts can be forwarded directly to the my.nethesis.it Mimir instance through the alert-proxy service.
-The following subscription parameters enable this feature:
-- `my_url`: Base URL of the Mimir proxy (e.g., `https://qa.my.nethesis.it`)
-- `my_system_key`: HTTP Basic Auth username
-- `my_system_secret`: HTTP Basic Auth password
+Community (`nscom`) clusters keep sending alerts to dartagnan
+(my.nethserver.com) and are unaffected.
 
-When all three parameters are set, the alert-proxy service will automatically forward all alerts to the Mimir alertmanager API endpoint.
-The webhook URL is constructed as: `{my_url}/collect/api/services/mimir/alertmanager/api/v2/alerts`
-
-To enable Mimir integration, set the subscription configuration in Redis then trigger a subscription change event:
-Execute all commands on the leader node with root privileges:
-
-```bash
-redis-cli HSET cluster/subscription \
-  my_url 'https://qa.my.nethesis.it' \
-  my_system_key 'your-system-key' \
-  my_system_secret 'your-system-secret'
-
-runagent -m metrics1 systemctl --user restart alert-proxy
-```
-
-To disable Mimir integration, remove the subscription parameters:
-
-```bash
-redis-cli HDEL cluster/subscription my_url my_system_key my_system_secret
-
-runagent -m metrics1 systemctl --user restart alert-proxy
-```
+> Migration note: the my switch-off release will repoint this from
+> `/proxy/alerts` to the native collect endpoint
+> (`/collect/api/services/mimir/alertmanager/api/v2/alerts`) with rotated
+> credentials.
 
 ### Customimze alert rules (experimental)
 

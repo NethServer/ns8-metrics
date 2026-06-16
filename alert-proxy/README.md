@@ -17,11 +17,11 @@ The service relies on several environment variables for its configuration:
 - `NMON_ALERT_PROVIDER`: Alert provider (`nsent` or `nscom`).
 - `NMON_ALERT_SYSTEM_ID`: System identifier for the alerts.
 - `NMON_DARTAGNAN_URL`: URL for the Dartagnan service (used if `NMON_ALERT_PROVIDER` is `nscom`).
-- `MIMIR_URL`: (Optional) URL of the Mimir alertmanager API endpoint (e.g., `https://qa.my.nethesis.it/collect/api/services/mimir/alertmanager/api/v2/alerts`).
-- `MIMIR_AUTH_USER`: (Optional) Username for HTTP Basic authentication to Mimir.
-- `MIMIR_AUTH_PASSWORD`: (Optional) Password for HTTP Basic authentication to Mimir.
+- `MIMIR_URL`: (Optional) URL the alerts are forwarded to. During the my migration window `write-alert-proxy-envfile` sets this to the credential-translation proxy (`https://my.nethesis.it/proxy/alerts`); the switch-off release repoints it to the native collect endpoint (`https://my.nethesis.it/collect/api/services/mimir/alertmanager/api/v2/alerts`).
+- `MIMIR_AUTH_USER`: (Optional) Username for HTTP Basic authentication (the subscription `system_id`).
+- `MIMIR_AUTH_PASSWORD`: (Optional) Password for HTTP Basic authentication (the subscription `auth_token`).
 
-When all three Mimir environment variables are set, the alert-proxy will forward all received alerts directly to the Mimir instance using HTTP Basic authentication.
+When all three Mimir environment variables are set, the alert-proxy forwards all received alerts to that endpoint using HTTP Basic authentication.
 
 ## Endpoints
 

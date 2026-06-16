@@ -23,16 +23,16 @@ if osubscription:
         "NMON_DARTAGNAN_URL": osubscription.get("dartagnan_url", ""),
     }
 
-    # Add Mimir forwarding configuration if available
-    my_url = osubscription.get("my_url", "")
-    my_system_key = osubscription.get("my_system_key", "")
-    my_system_secret = osubscription.get("my_system_secret", "")
-
-    if my_url and my_system_key and my_system_secret:
-        mimir_url = my_url.rstrip('/') + '/collect/api/services/mimir/alertmanager/api/v2/alerts'
-        env_vars["MIMIR_URL"] = mimir_url
-        env_vars["MIMIR_AUTH_USER"] = my_system_key
-        env_vars["MIMIR_AUTH_PASSWORD"] = my_system_secret
+    # Forward alerts to the new my.nethesis.it through the credential-translation
+    # proxy, mirroring send-heartbeat / send-inventory in ns8-core: enterprise
+    # (nsent) subscriptions POST to my.nethesis.it/proxy/alerts using the existing
+    # subscription credentials (system_id:auth_token), which the proxy maps to the
+    # new my credentials. Community (nscom) keeps using dartagnan. The my
+    # switch-off release will repoint this to the native collect path.
+    if osubscription.get("provider") == "nsent" and osubscription.get("system_id") and osubscription.get("auth_token"):
+        env_vars["MIMIR_URL"] = "https://my.nethesis.it/proxy/alerts"
+        env_vars["MIMIR_AUTH_USER"] = osubscription["system_id"]
+        env_vars["MIMIR_AUTH_PASSWORD"] = osubscription["auth_token"]
 
     agent.write_envfile("alert-proxy.env", env_vars)
 else:
