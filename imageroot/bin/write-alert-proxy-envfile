@@ -15,13 +15,26 @@ osubscription = rdb.hgetall('cluster/subscription')
 node_name = rdb.get(f'node/{os.environ["NODE_ID"]}/ui_name') or f'node/{os.environ["NODE_ID"]}'
 
 if osubscription:
-    agent.write_envfile("alert-proxy.env", {
+    env_vars = {
         "NMON_NODE_NAME": node_name,
-        "NMON_ALERT_AUTH_TOKEN": osubscription["auth_token"],
-        "NMON_ALERT_PROVIDER": osubscription["provider"],
-        "NMON_ALERT_SYSTEM_ID": osubscription["system_id"],
+        "NMON_ALERT_AUTH_TOKEN": osubscription.get("auth_token", ""),
+        "NMON_ALERT_PROVIDER": osubscription.get("provider", ""),
+        "NMON_ALERT_SYSTEM_ID": osubscription.get("system_id", ""),
         "NMON_DARTAGNAN_URL": osubscription.get("dartagnan_url", ""),
-    })
+    }
+
+    # Forward alerts to the new my.nethesis.it through the credential-translation
+    # proxy, mirroring send-heartbeat / send-inventory in ns8-core: enterprise
+    # (nsent) subscriptions POST to my.nethesis.it/proxy/alerts using the existing
+    # subscription credentials (system_id:auth_token), which the proxy maps to the
+    # new my credentials. Community (nscom) keeps using dartagnan. The my
+    # switch-off release will repoint this to the native collect path.
+    if osubscription.get("provider") == "nsent" and osubscription.get("system_id") and osubscription.get("auth_token"):
+        env_vars["MIMIR_URL"] = "https://my.nethesis.it/proxy/alerts"
+        env_vars["MIMIR_AUTH_USER"] = osubscription["system_id"]
+        env_vars["MIMIR_AUTH_PASSWORD"] = osubscription["auth_token"]
+
+    agent.write_envfile("alert-proxy.env", env_vars)
 else:
     print(agent.SD_WARNING + "Could not retrieve subscription information from Redis", file=sys.stderr)
     agent.write_envfile("alert-proxy.env", {})

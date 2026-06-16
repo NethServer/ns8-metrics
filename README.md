@@ -66,6 +66,25 @@ Configuration files are saved inside the state directory. The most important fil
   - templates.d: directory containing custom alert templates
 - local.yml: Grafana configuration, if enabled
 
+### Forwarding alerts to my.nethesis.it
+
+Enterprise (`nsent`) clusters with a valid my.nethesis.it subscription forward
+their alerts automatically, mirroring `send-heartbeat` / `send-inventory` in
+ns8-core. The alert-proxy POSTs alerts to the credential-translation proxy at
+`https://my.nethesis.it/proxy/alerts` using the existing subscription
+credentials (`system_id` / `auth_token`), which the proxy maps to the new my
+credentials before forwarding them to the Mimir alertmanager. No extra
+configuration is required: `write-alert-proxy-envfile` derives everything from
+`cluster/subscription`.
+
+Community (`nscom`) clusters keep sending alerts to dartagnan
+(my.nethserver.com) and are unaffected.
+
+> Migration note: the my switch-off release will repoint this from
+> `/proxy/alerts` to the native collect endpoint
+> (`/collect/api/services/mimir/alertmanager/api/v2/alerts`) with rotated
+> credentials.
+
 ### Customimze alert rules (experimental)
 
 **This is an experimental feature, do not use in production.**
