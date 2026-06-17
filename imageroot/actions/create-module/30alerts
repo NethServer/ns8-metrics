@@ -59,8 +59,8 @@ with open('rules.d/memory.yml', 'w') as f:
     annotations:
       summary_en: "Host swap is filling up (node {{ $labels.node }})"
       summary_it: "Lo spazio swap si sta riempiendo (nodo {{ $labels.node }})"
-      description_en: "Swap is filling up (>80%) on node {{ $labels.node }}. Current value: {{ $value }}%"
-      description_it: "Lo spazio swap si sta riempiendo (>80%) sul nodo {{ $labels.node }}. Valore attuale: {{ $value }}%"
+      description_en: "Swap is filling up (>80%) on node {{ $labels.node }}. Current value: {{ printf \\"%.1f\\" $value }}%"
+      description_it: "Lo spazio swap si sta riempiendo (>80%) sul nodo {{ $labels.node }}. Valore attuale: {{ printf \\"%.1f\\" $value }}%"
 
   - alert: SwapNotPresent
     expr: node_memory_SwapTotal_bytes == 0
