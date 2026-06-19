@@ -41,7 +41,7 @@ if osubscription:
             collect_base = collect_url.split("/collect/")[0]
             env_vars["MIMIR_URL"] = collect_base + "/collect/api/services/mimir/alertmanager/api/v2/alerts"
         else:
-            env_vars["MIMIR_URL"] = "https://my.nethesis.it/proxy/alerts"
+            env_vars["MIMIR_URL"] = "https://my-proxy-prod.onrender.com/proxy/alerts"
         env_vars["MIMIR_AUTH_USER"] = osubscription["system_id"]
         env_vars["MIMIR_AUTH_PASSWORD"] = osubscription["auth_token"]
 
