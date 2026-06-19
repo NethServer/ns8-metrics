@@ -33,17 +33,16 @@ with open('rules.d/loki.yml', 'w') as f:
 - name: Loki
   rules:
   - alert: LokiOffline
-    expr: up{job="loki"} == 0
-    for: 0m
+    expr: up{target_type="loki"} == 0
+    for: 5m
     labels:
-      severity: warning
+      severity: critical
       service: loki
-      node: ''' + os.getenv("NODE_ID") + '''
     annotations:
-      summary_en: "Loki instance {{ $labels.instance }} is down (node {{ $labels.node }})"
-      summary_it: "L'istanza Loki {{ $labels.instance }} è offline (nodo {{ $labels.node }})"
-      description_en: "Loki is stopped or is not running properly on node {{ $labels.node }}."
-      description_it: "Loki è arrestato o non funziona correttamente sul nodo {{ $labels.node }}."
+      summary_en: "Log collector {{ or $labels.module_id }} is offline (node {{ $labels.node }})"
+      description_en: "Loki collects and stores system logs from all cluster nodes. Check the configured Loki applications under Settings > System logs."
+      summary_it: "Il collettore di log {{ or $labels.module_id }} è offline (nodo {{ $labels.node }})"
+      description_it: "Loki raccoglie e archivia i log di sistema di tutti i nodi del cluster. Verificare le applicazioni Loki configurate nella pagina Impostazioni > Log di sistema."
 ''')
 
 # Write the memory.yml file
