@@ -168,7 +168,7 @@ def generate_alertmanagr_config(redis_client):
             'name': 'mail-alert'
         })
         alert_config['route']['routes'].append({
-            'matchers': ['service=~".*"'],
+            'matchers': ['severity="critical"'],
             'receiver': 'mail-alert',
             'continue': True
         })

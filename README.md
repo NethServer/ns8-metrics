@@ -45,7 +45,7 @@ Launch `configure-module`, by setting the following parameters:
    credentials used to access the `/cluster-admin` web UI
 - `grafana_path`: path to access Grafana web UI, if left blank grafana will be stopped; if enabled, you can authenticate with the same
    credentials used to access the `/cluster-admin` web UI
-- `mail_to`: list of email addresses to receive alerts, this requires that mail notifications are enabled at cluster level
+- `mail_to`: list of email addresses to receive critical alerts, this requires that mail notifications are enabled at cluster level
 - `mail_from`: email address used to send alerts, if left blank the default value is `alertmanager@<node_fqdn>`
 - `mail_template`: name of the template to use to send alerts, if left blank the default template is used
 

@@ -33,17 +33,16 @@ with open('rules.d/loki.yml', 'w') as f:
 - name: Loki
   rules:
   - alert: LokiOffline
-    expr: up{job="loki"} == 0
-    for: 0m
+    expr: up{target_type="loki"} == 0
+    for: 5m
     labels:
-      severity: warning
+      severity: critical
       service: loki
-      node: ''' + os.getenv("NODE_ID") + '''
     annotations:
-      summary_en: "Loki instance {{ $labels.instance }} is down (node {{ $labels.node }})"
-      summary_it: "L'istanza Loki {{ $labels.instance }} è offline (nodo {{ $labels.node }})"
-      description_en: "Loki is stopped or is not running properly on node {{ $labels.node }}."
-      description_it: "Loki è arrestato o non funziona correttamente sul nodo {{ $labels.node }}."
+      summary_en: "Log collector {{ or $labels.module_id }} is offline (node {{ $labels.node }})"
+      description_en: "Loki collects and stores system logs from all cluster nodes. Check the configured Loki applications under Settings > System logs."
+      summary_it: "Il collettore di log {{ or $labels.module_id }} è offline (nodo {{ $labels.node }})"
+      description_it: "Loki raccoglie e archivia i log di sistema di tutti i nodi del cluster. Verificare le applicazioni Loki configurate nella pagina Impostazioni > Log di sistema."
 ''')
 
 # Write the memory.yml file
@@ -59,8 +58,8 @@ with open('rules.d/memory.yml', 'w') as f:
     annotations:
       summary_en: "Host swap is filling up (node {{ $labels.node }})"
       summary_it: "Lo spazio swap si sta riempiendo (nodo {{ $labels.node }})"
-      description_en: "Swap is filling up (>80%) on node {{ $labels.node }}. Current value: {{ $value }}%"
-      description_it: "Lo spazio swap si sta riempiendo (>80%) sul nodo {{ $labels.node }}. Valore attuale: {{ $value }}%"
+      description_en: "Swap is filling up (>80%) on node {{ $labels.node }}. Current value: {{ printf \\"%.1f\\" $value }}%"
+      description_it: "Lo spazio swap si sta riempiendo (>80%) sul nodo {{ $labels.node }}. Valore attuale: {{ printf \\"%.1f\\" $value }}%"
 
   - alert: SwapNotPresent
     expr: node_memory_SwapTotal_bytes == 0
@@ -81,7 +80,7 @@ with open('rules.d/disk.yml', 'w') as f:
 - name: Disk
   rules:
   - alert: DiskSpaceLow
-    expr: (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .20 and node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes >= .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
+    expr: node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} and (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .20 and node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes >= .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
     for: 5m
     labels:
       severity: warning
@@ -93,7 +92,7 @@ with open('rules.d/disk.yml', 'w') as f:
       description_it: "Lo spazio disco si sta riempiendo su {{ $labels.mountpoint }} sul nodo {{ $labels.node }}. Lo spazio libero è limitato: {{ $value | humanize }}B"
 
   - alert: DiskSpaceCritical
-    expr: (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
+    expr: node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} and (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
     for: 2m
     labels:
       severity: critical
