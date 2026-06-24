@@ -88,8 +88,8 @@ with open('rules.d/disk.yml', 'w') as f:
     annotations:
       summary_en: "Disk usage on {{ $labels.mountpoint }} is above 80% (node {{ $labels.node }})"
       summary_it: "Utilizzo disco su {{ $labels.mountpoint }} superiore all'80% (nodo {{ $labels.node }})"
-      description_en: "Disk space is filling up on {{ $labels.mountpoint }} on node {{ $labels.node }}. Free space is limited: {{ $value | humanize }}B"
-      description_it: "Lo spazio disco si sta riempiendo su {{ $labels.mountpoint }} sul nodo {{ $labels.node }}. Lo spazio libero è limitato: {{ $value | humanize }}B"
+      description_en: "Disk space is filling up on mount point {{ $labels.mountpoint }} of node {{ $labels.node }}. Remaining free space: {{ $value | humanize }}B"
+      description_it: "Lo spazio su disco si sta esaurendo sul mount point {{ $labels.mountpoint }} del nodo {{ $labels.node }}. Spazio libero residuo: {{ $value | humanize }}B"
 
   - alert: DiskSpaceCritical
     expr: node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} and (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
@@ -100,8 +100,8 @@ with open('rules.d/disk.yml', 'w') as f:
     annotations:
       summary_en: "Disk usage on {{ $labels.mountpoint }} is above 90% (node {{ $labels.node }})."
       summary_it: "Utilizzo disco su {{ $labels.mountpoint }} superiore al 90% (nodo {{ $labels.node }})."
-      description_en: "Disk is almost full (< 10% left) on {{ $labels.mountpoint }} on node {{ $labels.node }}. Free space: {{ $value | humanize }}B. Immediate action is required to free up space or add more storage."
-      description_it: "Il disco è quasi pieno (< 10% disponibile) su {{ $labels.mountpoint }} sul nodo {{ $labels.node }}. Spazio libero: {{ $value | humanize }}B. È richiesta un'azione immediata per liberare spazio o aggiungere ulteriore storage."
+      description_en: "Disk space is critically low on mount point {{ $labels.mountpoint }} of node {{ $labels.node }}. Remaining free space: {{ $value | humanize }}B. Immediate action is required to free up space or add more storage."
+      description_it: "Lo spazio su disco è in esaurimento sul punto di montaggio {{ $labels.mountpoint }} del nodo {{ $labels.node }}. Spazio libero residuo: {{ $value | humanize }}B. È richiesta un'azione immediata per liberare o aggiungere spazio di archiviazione."
 
   - alert: RaidDiskFailed
     expr: (node_md_disks{state="failed"} > 0)
