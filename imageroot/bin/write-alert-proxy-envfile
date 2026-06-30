@@ -44,6 +44,9 @@ if osubscription:
             env_vars["MIMIR_URL"] = "https://my-proxy-prod.onrender.com/proxy/alerts"
         env_vars["MIMIR_AUTH_USER"] = osubscription["system_id"]
         env_vars["MIMIR_AUTH_PASSWORD"] = osubscription["auth_token"]
+        # Let alert-proxy skip the legacy isa alert store once the unit has
+        # rotated to native my creds (the legacy store only accepts old creds).
+        env_vars["NMON_ALERT_MIGRATED"] = osubscription.get("migrated", "")
 
     agent.write_envfile("alert-proxy.env", env_vars)
 else:
