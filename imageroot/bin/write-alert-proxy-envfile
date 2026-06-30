@@ -23,16 +23,30 @@ if osubscription:
         "NMON_DARTAGNAN_URL": osubscription.get("dartagnan_url", ""),
     }
 
-    # Forward alerts to the new my.nethesis.it through the credential-translation
-    # proxy, mirroring send-heartbeat / send-inventory in ns8-core: enterprise
-    # (nsent) subscriptions POST to my.nethesis.it/proxy/alerts using the existing
-    # subscription credentials (system_id:auth_token), which the proxy maps to the
-    # new my credentials. Community (nscom) keeps using dartagnan. The my
-    # switch-off release will repoint this to the native collect path.
+    # Forward alerts to the new my for enterprise (nsent) subscriptions. Two
+    # windows, mirroring ns8-core migrate-to-my / send-heartbeat:
+    #   - Pre-cutover (migrated != "1"): POST to the credential-translation proxy
+    #     at my.nethesis.it/proxy/alerts with the still-legacy subscription
+    #     credentials (system_id:auth_token); the proxy maps them to the new my
+    #     credentials.
+    #   - Post-cutover (migrated == "1" + collect_url): migrate-to-my has rotated
+    #     the credentials to native my credentials, so POST straight to the
+    #     native Mimir alertmanager derived from collect_url — the legacy-only
+    #     proxy would 401 the rotated credentials.
+    # Community (nscom) keeps using dartagnan. alert-proxy POSTs to MIMIR_URL
+    # verbatim, so this is the FULL endpoint (with /api/v2/alerts).
     if osubscription.get("provider") == "nsent" and osubscription.get("system_id") and osubscription.get("auth_token"):
-        env_vars["MIMIR_URL"] = "https://my.nethesis.it/proxy/alerts"
+        collect_url = osubscription.get("collect_url", "")
+        if osubscription.get("migrated") == "1" and collect_url:
+            collect_base = collect_url.split("/collect/")[0]
+            env_vars["MIMIR_URL"] = collect_base + "/collect/api/services/mimir/alertmanager/api/v2/alerts"
+        else:
+            env_vars["MIMIR_URL"] = "https://my-proxy-prod.onrender.com/proxy/alerts"
         env_vars["MIMIR_AUTH_USER"] = osubscription["system_id"]
         env_vars["MIMIR_AUTH_PASSWORD"] = osubscription["auth_token"]
+        # Let alert-proxy skip the legacy isa alert store once the unit has
+        # rotated to native my creds (the legacy store only accepts old creds).
+        env_vars["NMON_ALERT_MIGRATED"] = osubscription.get("migrated", "")
 
     agent.write_envfile("alert-proxy.env", env_vars)
 else:
