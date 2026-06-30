@@ -27,6 +27,7 @@ dartagnan_url = os.environ.get("NMON_DARTAGNAN_URL")
 mimir_url = os.environ.get("MIMIR_URL")
 mimir_auth_user = os.environ.get("MIMIR_AUTH_USER")
 mimir_auth_password = os.environ.get("MIMIR_AUTH_PASSWORD")
+migrated = os.environ.get("NMON_ALERT_MIGRATED")
 
 async def send_alert(url, value, alert, retry=3):
     if value == CLEAR:
@@ -66,7 +67,11 @@ async def raise_alert(value, alert):
         print("No auth token, alert not sent", file=sys.stderr)
         return
     if alert_provider == 'nsent':
-        await send_alert('https://my.nethesis.it/isa/alerts/store', value, alert)
+        # Once the unit has rotated to native my creds, alerts live in the new
+        # my Mimir (forward_to_mimir); the legacy isa store only accepts the old
+        # creds and would 401, so skip it post-migration.
+        if migrated != '1':
+            await send_alert('https://my.nethesis.it/isa/alerts/store', value, alert)
     elif alert_provider == 'nscom':
         await send_alert(f'{dartagnan_url}/machine/alerts/store', value, alert)
 
