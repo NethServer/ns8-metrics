@@ -11,6 +11,7 @@ import json
 import sys
 import os
 import base64
+from datetime import datetime, timezone, timedelta
 from aiohttp import web
 
 # Alarm states
@@ -79,14 +80,32 @@ async def forward_to_mimir(alerts):
     if not mimir_url or not mimir_auth_user or not mimir_auth_password:
         return
 
+    # Firing alerts arrive from Alertmanager with endsAt set to the zero time
+    # ("0001-01-01T00:00:00Z"). Mimir's alertmanager keeps such an alert only for
+    # its resolve_timeout (~5m) and then auto-resolves it, while Alertmanager
+    # re-sends a still-firing alert only every repeat_interval (hours) -- so the
+    # alert would disappear from the my dashboard after a few minutes. Give
+    # firing alerts a future endsAt so they persist until a 'resolved' webhook
+    # (which carries a real endsAt) clears them, or the buffer elapses if the
+    # unit goes silent. Resolved alerts are forwarded untouched.
+    future = (datetime.now(timezone.utc) + timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    for alert in alerts:
+        ends_at = alert.get("endsAt") or ""
+        if alert.get("status") == "firing" and (not ends_at or ends_at.startswith("0001-01-01")):
+            alert["endsAt"] = future
+
     try:
         credentials = base64.b64encode(f"{mimir_auth_user}:{mimir_auth_password}".encode()).decode()
         headers = {'Authorization': f'Basic {credentials}', 'Content-Type': 'application/json'}
 
         ctimeout = aiohttp.ClientTimeout(total=60.0, connect=50, sock_connect=40, sock_read=10)
         async with aiohttp.ClientSession(timeout=ctimeout) as cs:
-            await cs.post(mimir_url, json=alerts, headers=headers)
-        print(f"Forwarded {len(alerts)} alerts to Mimir", file=sys.stderr)
+            async with cs.post(mimir_url, json=alerts, headers=headers) as resp:
+                if resp.status >= 300:
+                    body = (await resp.text())[:300]
+                    print(f"Mimir rejected {len(alerts)} alerts: HTTP {resp.status}: {body}", file=sys.stderr)
+                else:
+                    print(f"Forwarded {len(alerts)} alerts to Mimir (HTTP {resp.status})", file=sys.stderr)
     except Exception as ex:
         print(f"Failed to forward alerts to Mimir: {str(ex)}", file=sys.stderr)
 
