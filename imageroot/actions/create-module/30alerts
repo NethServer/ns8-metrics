@@ -152,7 +152,7 @@ with open('rules.d/systemd.yml', 'w') as f:
 - name: Systemd
   rules:
   - alert: SystemdUnitFailed
-    expr: systemd_unit_state{target_type="systemd", module_id=~"nethvoice[0-9]*", type="service", state="failed"} == 1
+    expr: systemd_unit_state{target_type="systemd", module_id=~"nethvoice(-proxy)?[0-9]*", type="service", state="failed"} == 1
     for: 2m
     labels:
       severity: critical

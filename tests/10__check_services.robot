@@ -22,6 +22,8 @@ Check if alert-proxy is running
 Check if failed systemd unit alert is loaded
     Wait Until Keyword Succeeds    10    1s
     ...    Prometheus rule exists    SystemdUnitFailed
+    Wait Until Keyword Succeeds    10    1s
+    ...    Prometheus output contains    nethvoice(-proxy)?[0-9]*
 
 Check if module can be configured
     ${rc} =    Execute Command    api-cli run module/${MID}/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana"}'
@@ -49,6 +51,12 @@ HTTP GET has status 200
 Prometheus rule exists
     [Arguments]    ${rule_name}
     ${rc} =    Execute Command    curl -fsS http://127.0.0.1:9091/api/v1/rules | grep -q '"name":"${rule_name}"'
+    ...    return_rc=True  return_stdout=False
+    Should Be Equal As Integers    ${rc}  0
+
+Prometheus output contains
+    [Arguments]    ${substring}
+    ${rc} =    Execute Command    curl -fsS http://127.0.0.1:9091/api/v1/rules | grep -Fq '${substring}'
     ...    return_rc=True  return_stdout=False
     Should Be Equal As Integers    ${rc}  0
 
