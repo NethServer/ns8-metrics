@@ -146,6 +146,24 @@ with open('rules.d/backup.yml', 'w') as f:
       description_it: "Il backup {{ $labels.name }} (ID: {{ $labels.id }}) è fallito e richiede attenzione."
 ''')
 
+# Write the systemd.yml file
+with open('rules.d/systemd.yml', 'w') as f:
+    f.write('''groups:
+- name: Systemd
+  rules:
+  - alert: SystemdUnitFailed
+    expr: systemd_unit_state{target_type="systemd", module_id=~"nethvoice[0-9]*", type="service", state="failed"} == 1
+    for: 2m
+    labels:
+      severity: critical
+      service: nethvoice
+    annotations:
+      summary_en: "Systemd unit {{ $labels.name }} has failed ({{ $labels.module_id }}, node {{ $labels.node }})"
+      summary_it: "Unità systemd {{ $labels.name }} fallita ({{ $labels.module_id }}, nodo {{ $labels.node }})"
+      description_en: "Systemd unit {{ $labels.name }} for {{ $labels.module_id }} on node {{ $labels.node }} is in failed state."
+      description_it: "L'unità systemd {{ $labels.name }} per {{ $labels.module_id }} sul nodo {{ $labels.node }} è in stato failed."
+''')
+
 # Write the tlscert.yml file
 with open('rules.d/tlscert.yml', 'w') as f:
     f.write(r'''groups:

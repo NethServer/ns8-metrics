@@ -137,6 +137,8 @@ async def handle_post_request(request):
                 alert_id = f'cert-expiring-critical:{labels.get("cn", "unknown")}:node:{node_id}'
             elif alert_name == 'CertExpired':
                 alert_id = f'cert-expired:{labels.get("cn", "unknown")}:node:{node_id}'
+            elif alert_name == 'SystemdUnitFailed':
+                alert_id = f'systemd-unit-failed:{labels.get("module_id", "unknown")}:{labels.get("name", "unknown")}:node:{node_id}'
             else:
                 alert_id = f"{alert_name.lower().replace('_', '-')}:node:{node_id}"
 
