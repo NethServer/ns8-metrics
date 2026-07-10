@@ -1,0 +1,110 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+set -o pipefail
+
+prometheus_path="${PROMETHEUS_PATH:-}"
+prometheus_path="${prometheus_path#/}"
+prometheus_path="${prometheus_path%/}"
+prometheus_api="http://127.0.0.1:9091"
+if [[ -n "${prometheus_path}" ]]; then
+    prometheus_api="${prometheus_api}/${prometheus_path}"
+fi
+
+query_prometheus_metric() {
+    local metric_name="$1"
+
+    curl --fail --silent --show-error --max-time 3 \
+        "${prometheus_api}/metrics" \
+        | python3 -c '
+import sys
+
+metric_name = sys.argv[1]
+for line in sys.stdin:
+    fields = line.split()
+    if len(fields) >= 2 and fields[0] == metric_name:
+        print(fields[1])
+        sys.exit(0)
+sys.exit(1)
+' "${metric_name}"
+}
+
+wait_for_config_reload() {
+    local previous_timestamp="$1"
+    local require_advance="$2"
+    local success timestamp
+
+    for ((attempt = 0; attempt < 30; attempt++)); do
+        success="$(query_prometheus_metric prometheus_config_last_reload_successful 2>/dev/null || true)"
+        timestamp="$(query_prometheus_metric prometheus_config_last_reload_success_timestamp_seconds 2>/dev/null || true)"
+        if python3 - "${success}" "${timestamp}" "${previous_timestamp}" "${require_advance}" <<'PY'
+import sys
+
+try:
+    successful = float(sys.argv[1]) == 1
+    timestamp = float(sys.argv[2])
+    previous = float(sys.argv[3]) if sys.argv[3] else 0
+except (ValueError, IndexError):
+    sys.exit(1)
+
+advanced = timestamp > previous
+if successful and (sys.argv[4] != "yes" or advanced):
+    sys.exit(0)
+sys.exit(1)
+PY
+        then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+if ! provision-prometheus; then
+    echo "Failed to provision Prometheus alert rules" >&2
+    exit 1
+fi
+
+# Do not start a disabled or inactive service from an integration event.
+if ! systemctl --user --quiet is-active prometheus.service; then
+    exit 0
+fi
+
+previous_timestamp="$(query_prometheus_metric prometheus_config_last_reload_success_timestamp_seconds 2>/dev/null || true)"
+reload_verified=false
+
+if systemctl --user reload prometheus.service; then
+    if [[ -n "${previous_timestamp}" ]] \
+        && wait_for_config_reload "${previous_timestamp}" yes; then
+        reload_verified=true
+    else
+        echo "Prometheus reload could not be verified; restarting the service" >&2
+    fi
+else
+    echo "Prometheus reload failed; restarting the service" >&2
+fi
+
+if [[ "${reload_verified}" != true ]]; then
+    if ! systemctl --user try-restart prometheus.service; then
+        echo "Failed to restart Prometheus after an unsuccessful reload" >&2
+        exit 1
+    fi
+    require_advance=yes
+    if [[ -z "${previous_timestamp}" ]]; then
+        require_advance=no
+    fi
+    if ! wait_for_config_reload "${previous_timestamp}" "${require_advance}"; then
+        echo "Prometheus configuration reload was not successful" >&2
+        exit 1
+    fi
+fi
+
+# Metric existence is advisory. API failures and unknown metrics must not make
+# an otherwise valid rule update fail.
+if ! provision-prometheus --check-metrics; then
+    echo "Deferred alert-rule metric reference check" >&2
+fi

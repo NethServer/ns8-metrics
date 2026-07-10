@@ -10,6 +10,7 @@ import yaml
 import agent
 import json
 import sys
+import metrics_alert_rules
 
 ALERT_MANAGER_DEFAULT_CONFIG = {
     'global': {},
@@ -179,22 +180,7 @@ def generate_alertmanagr_config(redis_client):
         yaml.safe_dump(json.loads(json.dumps(alert_config)), f, default_flow_style=False, sort_keys=False)
 
 def generate_custom_alertmanager_rules(redis_client):
-    rules = []
-    halerts = redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/custom_alerts') or {}
-    for key, alert in halerts.items():
-        if alert:
-            try:
-                rules.append(yaml.safe_load(alert))
-            except Exception as ex:
-                print(f"Skipped custom rule {key}: {ex}", file=sys.stderr)
-    if rules:
-        custom_data = {"groups": [{"name": "Custom", "rules": rules}]}
-        yaml.safe_dump(custom_data, open('rules.d/custom.yml', 'w'))
-    else:
-        try:
-            os.remove('rules.d/custom.yml')
-        except:
-            pass
+    metrics_alert_rules.provision(redis_client)
 
 def generate_custom_alertmanager_templates(redis_client):
     # Custom template declarations are concatenated in the same file:
@@ -206,9 +192,14 @@ def generate_custom_alertmanager_templates(redis_client):
 # connect to client and fetch providers for prometheus
 redis_client = agent.redis_connect(use_replica=True)
 
+if sys.argv[1:] == ['--check-metrics']:
+    metrics_alert_rules.check_metric_references(redis_client)
+    sys.exit(0)
+
 # This script can run before create-module, as event
 # handler. Ensure required dir exists:
 os.makedirs("prometheus.d", exist_ok=True)
+os.makedirs("rules.d", exist_ok=True)
 
 # Generate providers configuration
 clean_up_old_provisioned_targets(redis_client)
