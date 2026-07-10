@@ -93,12 +93,17 @@ Configuration may change on the future releases.
 All alert rules are defined in the `rules.d` directory. Files can't be
 modified directly and will be overwritten upon module update.
 
+Custom alerts use the same accepted formats and validation pipeline described
+under the [metrics-alert-rules-changed event](#metrics-alert-rules-changed-event).
+Compatibility with the previous experimental behavior is not guaranteed;
+malformed or unsupported values are skipped.
+
 You can create a custom rule by adding the configuration to Redis.
 A carefully curated list of rules can be found at [Awesome Prometheus
 alerts](https://samber.github.io/awesome-prometheus-alerts/).
 
-To add a custom rule, create a rule file, load it into Redis, and restart
-Prometheus.
+To add a custom rule, create a rule file, load it into Redis, and signal the
+alert-rule event.
 
 Example of `myalert1.yml`:
 
@@ -121,16 +126,15 @@ Load the configuration into Redis by reading it from the file
 `myalert1.yml`:
 
     redis-cli -x hset module/metrics1/custom_alerts myalert1 <myalert1.yml
-    runagent -m metrics1 systemctl --user restart prometheus
+    redis-cli publish module/metrics1/event/metrics-alert-rules-changed '{}'
 
-To remove the custom alert, run the following command and restart
-Prometheus:
+To remove the custom alert, run the following commands:
 
     redis-cli hdel module/metrics1/custom_alerts myalert1
-    runagent -m metrics1 systemctl --user restart prometheus
+    redis-cli publish module/metrics1/event/metrics-alert-rules-changed '{}'
 
 If the rule does not appear to be loaded, inspect the module log on the
-Logs page, searching for YAML parse errors.
+Logs page, searching for validation errors.
 
 
 ### Customize alert mail template (experimental)
@@ -219,6 +223,119 @@ Content of the `target.yaml` file:
 ```
 
 The configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
+
+#### metrics-alert-rules-changed event
+
+A module instance can publish alerting rules in the following Redis hash:
+
+```text
+module/<module_id>/metrics_alert_rules
+```
+
+The hash contains:
+
+- key `<name>`, a stable identifier containing only letters, numbers, `.`,
+  `_`, or `-`;
+- value `<yaml_config>`, either a complete Prometheus `groups:` document or a
+  single alerting rule.
+
+##### Choosing a payload format
+
+Prometheus ultimately loads every payload as a complete rule file containing
+one or more groups. Modules can publish either that complete structure or let
+the `metrics` module create a group around one alert.
+
+| Payload format | Recommended use |
+| --- | --- |
+| Complete Prometheus file (`groups:`) | Multiple related groups or alerts |
+| Single alert rule (`alert` and `expr`) | One independently managed alert |
+
+A complete rule file preserves the supplied group names and can contain
+multiple groups, each with one or more alerts.
+
+Complete rule-file format:
+
+```yaml
+groups:
+- name: postgresql.rules
+  rules:
+  - alert: PostgresqlDown
+    expr: up{module_id="postgresql1", target_type="postgres"} == 0
+    for: 5m
+    labels:
+      severity: critical
+      service: postgresql
+    annotations:
+      summary_en: "PostgreSQL is down ({{ $labels.module_id }})"
+      summary_it: "PostgreSQL non raggiungibile ({{ $labels.module_id }})"
+      description_en: "The PostgreSQL service is not reachable."
+      description_it: "Il servizio PostgreSQL non è raggiungibile."
+```
+
+Single-rule format:
+
+```yaml
+alert: PostgresqlDown
+expr: up{module_id="postgresql1", target_type="postgres"} == 0
+for: 5m
+labels:
+  severity: critical
+  service: postgresql
+annotations:
+  summary_en: "PostgreSQL is down ({{ $labels.module_id }})"
+  summary_it: "PostgreSQL non raggiungibile ({{ $labels.module_id }})"
+  description_en: "The PostgreSQL service is not reachable."
+  description_it: "Il servizio PostgreSQL non è raggiungibile."
+```
+
+The single-rule format is not restricted to a literal single YAML line. It can
+use all the alert fields shown above. The provisioner automatically normalizes
+it to the following structure, using the publishing module ID and Redis field
+name for the generated group name:
+
+```yaml
+groups:
+- name: <module_id>.<name>
+  rules:
+  - <single alert rule>
+```
+
+Use the single-rule format when each alert should have its own Redis field and
+lifecycle. Use a complete rule file when several related alerts or groups
+should be published and removed together.
+
+Publish a rule and signal its event:
+
+    redis-cli -x hset module/postgresql1/metrics_alert_rules postgres <alerts.yml
+    redis-cli publish module/postgresql1/event/metrics-alert-rules-changed '{}'
+
+Each Redis hash field produces exactly one file named
+`rules.d/provision_<module_id>_<name>.yml`. A complete payload can therefore
+place multiple groups or alerts in that file, while a single-rule payload
+produces one generated group containing one alert. Delete the Redis field or
+hash and signal the event again to remove its generated files. Modules must
+also remove their rules during uninstall, disable, or restore operations.
+
+The event provisions all rules, reloads active Prometheus instances with
+`SIGHUP`, verifies the reload, and falls back to a restart on failure. It does
+not start an inactive Prometheus service.
+
+Malformed YAML, unsupported schemas, recording rules, and rules rejected by
+`promtool` are skipped. An invalid update does not replace its previous valid
+file or prevent other valid fields from being installed. Missing or unsupported
+`severity` labels, incomplete bilingual annotations, and references to unknown
+metrics generate warnings without rejecting the rule. Metric checks fail open
+if the Prometheus parser or metric-name APIs are unavailable.
+
+All labels are preserved without injecting `module_id`, `source_module_id`, a
+default severity, or other labels. Duplicate alert names are accepted with a
+warning. Use a unique module/application prefix, such as `PostgresqlDown`, to
+avoid ambiguous Alertmanager grouping and external alert IDs.
+
+Module-provided alerts follow the existing default Alertmanager route. They are
+forwarded to Nethesis portals and Mimir when subscription credentials are
+available. Critical alerts are also sent by email when mail notifications are
+configured.
 
 
 ### Provisioning Grafana
