@@ -1,0 +1,10 @@
+alert: TestMetricsCustomAlert
+expr: prometheus_build_info == 1
+labels:
+  severity: warning
+  origin: custom-alerts
+annotations:
+  summary_en: "Metrics custom alert"
+  summary_it: "Avviso personalizzato di Metrics"
+  description_en: "The custom alert uses shared validation."
+  description_it: "L'avviso personalizzato usa la validazione condivisa."

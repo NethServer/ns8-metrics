@@ -1,0 +1,9 @@
+alert: TestModuleInvalidPromql
+expr: 'up{'
+labels:
+  severity: critical
+annotations:
+  summary_en: "Invalid query"
+  summary_it: "Query non valida"
+  description_en: "This update must be rejected."
+  description_it: "Questo aggiornamento deve essere rifiutato."

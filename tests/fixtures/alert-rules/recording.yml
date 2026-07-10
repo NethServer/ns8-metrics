@@ -1,0 +1,2 @@
+record: testmodule:saved_metric
+expr: prometheus_build_info

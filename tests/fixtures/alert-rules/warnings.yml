@@ -1,0 +1,7 @@
+alert: TestModuleUnknownMetric
+expr: ns8_test_metric_that_does_not_exist > 0
+labels:
+  severity: info
+  owner: test-suite
+annotations:
+  summary_en: "Unknown test metric"

@@ -1,2 +1,3 @@
+PyYAML
 robotframework
 robotframework-sshlibrary

@@ -1,0 +1,12 @@
+alert: TestModuleConnectionsHigh
+expr: prometheus_build_info == 1
+for: 1m
+labels:
+  severity: warning
+  service: test-service
+  custom_label: preserved
+annotations:
+  summary_en: "Test connection count is high"
+  summary_it: "Il numero di connessioni di test è elevato"
+  description_en: "The test connection count exceeded its threshold."
+  description_it: "Il numero di connessioni di test ha superato la soglia."

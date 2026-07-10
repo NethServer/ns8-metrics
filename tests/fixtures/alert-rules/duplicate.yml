@@ -1,0 +1,9 @@
+alert: TestModuleConnectionsHigh
+expr: prometheus_build_info == 1
+labels:
+  severity: warning
+annotations:
+  summary_en: "Duplicate test alert"
+  summary_it: "Avviso di test duplicato"
+  description_en: "This duplicate is accepted with a warning."
+  description_it: "Questo duplicato è accettato con un avviso."

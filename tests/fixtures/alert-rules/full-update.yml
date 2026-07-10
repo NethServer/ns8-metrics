@@ -1,0 +1,15 @@
+groups:
+- name: testmodule.rules
+  rules:
+  - alert: TestModuleServiceRecovered
+    expr: up{module_id="testmodule1"} == 1
+    for: 1m
+    labels:
+      severity: warning
+      service: test-service
+      module_id: preserved-label
+    annotations:
+      summary_en: "Test service is reachable"
+      summary_it: "Il servizio di test è raggiungibile"
+      description_en: "The updated test rule is active."
+      description_it: "La regola di test aggiornata è attiva."

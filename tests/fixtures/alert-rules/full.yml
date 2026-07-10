@@ -1,0 +1,15 @@
+groups:
+- name: testmodule.rules
+  rules:
+  - alert: TestModuleServiceDown
+    expr: up{module_id="testmodule1"} == 0
+    for: 5m
+    labels:
+      severity: critical
+      service: test-service
+      module_id: preserved-label
+    annotations:
+      summary_en: "Test service is down"
+      summary_it: "Il servizio di test non è raggiungibile"
+      description_en: "The test service is not reachable."
+      description_it: "Il servizio di test non è raggiungibile."
