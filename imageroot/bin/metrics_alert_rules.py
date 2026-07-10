@@ -182,7 +182,10 @@ def _validate_rule_schema(document):
 def normalize_alert_rule(payload, module_id, name):
     try:
         data = yaml.safe_load(payload)
-    except yaml.YAMLError as ex:
+    # PyYAML can propagate built-in exceptions for malformed implicit values
+    # and excessively nested input. Contain every parser failure here so one
+    # publisher cannot abort the complete provisioning run.
+    except Exception as ex:
         raise RuleValidationError(f"invalid YAML: {ex}") from ex
 
     if not isinstance(data, dict):
@@ -297,7 +300,10 @@ def _install_alert_rule(source):
             os.chmod(candidate, 0o644)
             _run_promtool(candidate_dir, candidate_name)
             os.replace(candidate, target)
-    except (OSError, RuleValidationError, yaml.YAMLError) as ex:
+    # Rule payloads are untrusted, and PyYAML can surface built-in exceptions
+    # from both parsing and serialization. Keep every source failure inside
+    # this per-rule boundary so provisioning can continue with other rules.
+    except Exception as ex:
         disposition = "previous valid file retained" if retained else "no rule file installed"
         print(
             f"Skipped alert rule {source.name!r} for module {source.module_id}: "

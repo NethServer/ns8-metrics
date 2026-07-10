@@ -121,6 +121,19 @@ class AlertRuleValidationTest(unittest.TestCase):
                         payload, "postgresql1", "invalid"
                     )
 
+    def test_wraps_non_yaml_parser_errors(self):
+        with mock.patch.object(
+            provision_prometheus.yaml,
+            "safe_load",
+            side_effect=RecursionError("input is too deeply nested"),
+        ):
+            with self.assertRaisesRegex(
+                provision_prometheus.RuleValidationError, "invalid YAML"
+            ):
+                provision_prometheus.normalize_alert_rule(
+                    SINGLE_RULE, "postgresql1", "nested"
+                )
+
     def test_rejects_unsafe_file_names(self):
         for name in ("", ".", "..", "../escape", "has/slash", "has space"):
             with self.subTest(name=name):
@@ -213,6 +226,60 @@ class AlertRuleProvisioningTest(unittest.TestCase):
 
         self.assertEqual(path.read_bytes(), previous)
         self.assertIn("previous valid file retained", stderr.getvalue())
+        self.assertEqual(promtool.call_count, 1)
+
+    @mock.patch.object(provision_prometheus, "_run_promtool")
+    def test_invalid_implicit_value_does_not_block_other_rules(self, promtool):
+        invalid_date_rule = SINGLE_RULE.replace(
+            "summary_en: English summary", "summary_en: 2026-99-99"
+        )
+        redis = FakeRedis({
+            "module/postgresql1/metrics_alert_rules": {
+                "invalid-date": invalid_date_rule,
+                "valid": FULL_RULE,
+            }
+        })
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            provision_prometheus.provision(redis)
+
+        self.assertFalse(
+            Path("rules.d/provision_postgresql1_invalid-date.yml").exists()
+        )
+        self.assertTrue(Path("rules.d/provision_postgresql1_valid.yml").exists())
+        self.assertIn("invalid YAML", stderr.getvalue())
+        self.assertIn("no rule file installed", stderr.getvalue())
+
+    @mock.patch.object(provision_prometheus, "_run_promtool")
+    def test_serialization_failure_does_not_block_other_rules(self, promtool):
+        redis = FakeRedis({
+            "module/postgresql1/metrics_alert_rules": {
+                "invalid": SINGLE_RULE.replace("PostgresqlDown", "InvalidAlert"),
+                "valid": FULL_RULE,
+            }
+        })
+        real_safe_dump = yaml.safe_dump
+
+        def serialize(document, *args, **kwargs):
+            alert_names = {
+                rule["alert"]
+                for group in document["groups"]
+                for rule in group["rules"]
+            }
+            if "InvalidAlert" in alert_names:
+                raise RecursionError("input is too deeply nested")
+            return real_safe_dump(document, *args, **kwargs)
+
+        stderr = io.StringIO()
+        with mock.patch.object(
+            provision_prometheus.yaml, "safe_dump", side_effect=serialize
+        ), contextlib.redirect_stderr(stderr):
+            provision_prometheus.provision(redis)
+
+        self.assertFalse(Path("rules.d/provision_postgresql1_invalid.yml").exists())
+        self.assertTrue(Path("rules.d/provision_postgresql1_valid.yml").exists())
+        self.assertIn("input is too deeply nested", stderr.getvalue())
         self.assertEqual(promtool.call_count, 1)
 
     @mock.patch.object(provision_prometheus, "_run_promtool")
