@@ -191,9 +191,12 @@ def generate_custom_alertmanager_templates(redis_client):
 
 # connect to client and fetch providers for prometheus
 redis_client = agent.redis_connect(use_replica=True)
+alert_rules_redis_client = agent.redis_connect(
+    use_replica=True, decode_responses=False
+)
 
 if sys.argv[1:] == ['--check-metrics']:
-    metrics_alert_rules.check_metric_references(redis_client)
+    metrics_alert_rules.check_metric_references(alert_rules_redis_client)
     sys.exit(0)
 
 # This script can run before create-module, as event
@@ -209,5 +212,5 @@ clean_up_old_provider_configs(redis_client)
 
 # Generate alertmanager configuration
 generate_alertmanagr_config(redis_client)
-generate_custom_alertmanager_rules(redis_client)
+generate_custom_alertmanager_rules(alert_rules_redis_client)
 generate_custom_alertmanager_templates(redis_client)

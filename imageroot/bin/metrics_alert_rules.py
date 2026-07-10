@@ -43,6 +43,7 @@ class AlertRuleSource:
     name: str
     payload: str
     redis_key: str
+    payload_error: str = ""
 
     @property
     def filename(self):
@@ -53,6 +54,21 @@ def _as_text(value):
     if isinstance(value, bytes):
         return value.decode("utf-8")
     return str(value)
+
+
+def _decode_alert_rule_source(module_id, raw_name, raw_payload, redis_key):
+    name = _as_text(raw_name)
+    try:
+        payload = _as_text(raw_payload)
+    except (UnicodeError, ValueError) as ex:
+        return AlertRuleSource(
+            module_id,
+            name,
+            "",
+            redis_key,
+            f"payload is not valid UTF-8: {ex}",
+        )
+    return AlertRuleSource(module_id, name, payload, redis_key)
 
 
 def generated_rule_filename(module_id, name):
@@ -98,25 +114,27 @@ def discover_alert_rule_sources(redis_client, report_errors=True):
         values = redis_client.hgetall(redis_key) or {}
         for raw_name, raw_payload in values.items():
             try:
-                name = _as_text(raw_name)
-                payload = _as_text(raw_payload)
+                source = _decode_alert_rule_source(
+                    module_id, raw_name, raw_payload, redis_key
+                )
             except (UnicodeError, ValueError) as ex:
                 if report_errors:
                     print(f"Skipped alert rule for module {module_id}: {ex}", file=sys.stderr)
                 continue
-            raw_sources.append(AlertRuleSource(module_id, name, payload, redis_key))
+            raw_sources.append(source)
 
     module_id = os.environ["MODULE_ID"]
     custom_key = f"module/{module_id}/custom_alerts"
     for raw_name, raw_payload in (redis_client.hgetall(custom_key) or {}).items():
         try:
-            name = _as_text(raw_name)
-            payload = _as_text(raw_payload)
+            source = _decode_alert_rule_source(
+                module_id, raw_name, raw_payload, custom_key
+            )
         except (UnicodeError, ValueError) as ex:
             if report_errors:
                 print(f"Skipped custom alert rule for module {module_id}: {ex}", file=sys.stderr)
             continue
-        raw_sources.append(AlertRuleSource(module_id, name, payload, custom_key))
+        raw_sources.append(source)
 
     sources = []
     output_owners = {}
@@ -288,6 +306,8 @@ def _install_alert_rule(source):
     retained = target.is_file()
 
     try:
+        if source.payload_error:
+            raise RuleValidationError(source.payload_error)
         document = normalize_alert_rule(source.payload, source.module_id, source.name)
         warn_incomplete_rules(document, source)
 

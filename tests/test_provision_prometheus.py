@@ -9,6 +9,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import runpy
 import sys
 import tempfile
 import types
@@ -229,6 +230,28 @@ class AlertRuleProvisioningTest(unittest.TestCase):
         self.assertEqual(promtool.call_count, 1)
 
     @mock.patch.object(provision_prometheus, "_run_promtool")
+    def test_non_utf8_update_keeps_previous_valid_file(self, promtool):
+        key = "module/postgresql1/metrics_alert_rules"
+        redis = FakeRedis({key: {b"availability": SINGLE_RULE.encode("utf-8")}})
+        provision_prometheus.provision(redis)
+        path = Path("rules.d/provision_postgresql1_availability.yml")
+        previous = path.read_bytes()
+
+        redis.values[key] = {
+            b"availability": b"\xff",
+            b"connections": FULL_RULE.encode("utf-8"),
+        }
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            provision_prometheus.provision(redis)
+
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertTrue(Path("rules.d/provision_postgresql1_connections.yml").exists())
+        self.assertIn("payload is not valid UTF-8", stderr.getvalue())
+        self.assertIn("previous valid file retained", stderr.getvalue())
+        self.assertEqual(promtool.call_count, 2)
+
+    @mock.patch.object(provision_prometheus, "_run_promtool")
     def test_invalid_implicit_value_does_not_block_other_rules(self, promtool):
         invalid_date_rule = SINGLE_RULE.replace(
             "summary_en: English summary", "summary_en: 2026-99-99"
@@ -426,6 +449,35 @@ class MetricReferenceCheckTest(unittest.TestCase):
         self.assertIn("rule 'database'", warning)
         self.assertIn("alert 'AppDown'", warning)
         self.assertIn("unknown metric 'app_up'", warning)
+
+
+class ProvisionPrometheusEntrypointTest(unittest.TestCase):
+    def test_uses_raw_redis_connection_for_alert_rules(self):
+        redis_connect = mock.Mock(side_effect=("decoded-client", "raw-client"))
+        fake_agent = types.ModuleType("agent")
+        fake_agent.redis_connect = redis_connect
+        check_metric_references = mock.Mock()
+        fake_alert_rules = types.ModuleType("metrics_alert_rules")
+        fake_alert_rules.check_metric_references = check_metric_references
+        script = Path(__file__).parents[1] / "imageroot/bin/provision-prometheus"
+
+        with mock.patch.dict(
+            sys.modules,
+            {"agent": fake_agent, "metrics_alert_rules": fake_alert_rules},
+        ), mock.patch.object(
+            sys, "argv", [str(script), "--check-metrics"]
+        ), self.assertRaises(SystemExit) as raised:
+            runpy.run_path(str(script), run_name="__main__")
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(
+            redis_connect.call_args_list,
+            [
+                mock.call(use_replica=True),
+                mock.call(use_replica=True, decode_responses=False),
+            ],
+        )
+        check_metric_references.assert_called_once_with("raw-client")
 
 
 if __name__ == "__main__":
