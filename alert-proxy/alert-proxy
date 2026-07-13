@@ -85,6 +85,49 @@ async def forward_to_mimir(alerts):
     except Exception as ex:
         print(f"Failed to forward alerts to Mimir: {str(ex)}", file=sys.stderr)
 
+
+def build_alert_id(alert_name, labels, node_id):
+    """Map an Alertmanager alert to its stable external identifier."""
+    if alert_name == 'DiskSpaceLow':
+        mountpoint = labels.get('mountpoint')
+        if mountpoint:
+            directory = os.path.basename(mountpoint)
+            return f'disk-low:{directory}:node:{node_id}'
+        return f'disk-low:{labels.get("device", "unknown")}:node:{node_id}'
+    if alert_name == 'DiskSpaceCritical':
+        mountpoint = labels.get('mountpoint')
+        if mountpoint:
+            directory = os.path.basename(mountpoint)
+            return f'disk-full:{directory}:node:{node_id}'
+        return f'disk:{labels.get("device", "unknown")}:node:{node_id}'
+    if alert_name == 'SwapFull':
+        return f'swap:node:{node_id}'
+    if alert_name == 'SwapNotPresent':
+        return f'swap-notpresent:node:{node_id}'
+    if alert_name == 'RaidDiskFailed':
+        return f'raid-disk-failed:{labels.get("device", "unknown")}:node:{node_id}'
+    if alert_name == 'RaidDriveMissing':
+        return f'raid-drive-missing:{labels.get("device", "unknown")}:node:{node_id}'
+    if alert_name == 'BackupFailed':
+        return f'backup-failed:{labels.get("name", "unknown")}:node:{node_id}'
+    if alert_name == 'NodeOffline':
+        return f'node-offline:node:{node_id}'
+    if alert_name == 'LokiOffline':
+        return f'loki-offline:node:{node_id}'
+    if alert_name == 'CertExpiringSoon':
+        return f'cert-expiring-soon:{labels.get("cn", "unknown")}:node:{node_id}'
+    if alert_name == 'CertExpiringCritical':
+        return f'cert-expiring-critical:{labels.get("cn", "unknown")}:node:{node_id}'
+    if alert_name == 'CertExpired':
+        return f'cert-expired:{labels.get("cn", "unknown")}:node:{node_id}'
+
+    normalized_name = alert_name.lower().replace('_', '-')
+    module_id = labels.get('module_id')
+    if module_id:
+        return f'{normalized_name}:{module_id}:node:{node_id}'
+    return f'{normalized_name}:node:{node_id}'
+
+
 async def handle_post_request(request):
     try:
         data = await request.json()
@@ -102,43 +145,8 @@ async def handle_post_request(request):
             node_id = labels.get('node', 'unknown')
             alert_name = labels.get('alertname', 'unknown')
 
-            # Remap UpperCamelCase alert names to internal alert id format
-            if alert_name == 'DiskSpaceLow':
-                mountpoint = labels.get('mountpoint')
-                if mountpoint:
-                    dir = os.path.basename(mountpoint)
-                    alert_id = f'disk-low:{dir}:node:{node_id}'
-                else:
-                    alert_id = f'disk-low:{labels.get("device", "unknown")}:node:{node_id}'
-            elif alert_name == 'DiskSpaceCritical':
-                mountpoint = labels.get('mountpoint')
-                if mountpoint:
-                    dir = os.path.basename(mountpoint)
-                    alert_id = f'disk-full:{dir}:node:{node_id}'
-                else:
-                    alert_id = f'disk:{labels.get("device", "unknown")}:node:{node_id}'
-            elif alert_name == 'SwapFull':
-                alert_id = f'swap:node:{node_id}'
-            elif alert_name == 'SwapNotPresent':
-                alert_id = f'swap-notpresent:node:{node_id}'
-            elif alert_name == 'RaidDiskFailed':
-                alert_id = f'raid-disk-failed:{labels.get("device", "unknown")}:node:{node_id}'
-            elif alert_name == 'RaidDriveMissing':
-                alert_id = f'raid-drive-missing:{labels.get("device", "unknown")}:node:{node_id}'
-            elif alert_name == 'BackupFailed':
-                alert_id = f'backup-failed:{labels.get("name", "unknown")}:node:{node_id}'
-            elif alert_name == 'NodeOffline':
-                alert_id = f'node-offline:node:{node_id}'
-            elif alert_name == 'LokiOffline':
-                alert_id = f'loki-offline:node:{node_id}'
-            elif alert_name == 'CertExpiringSoon':
-                alert_id = f'cert-expiring-soon:{labels.get("cn", "unknown")}:node:{node_id}'
-            elif alert_name == 'CertExpiringCritical':
-                alert_id = f'cert-expiring-critical:{labels.get("cn", "unknown")}:node:{node_id}'
-            elif alert_name == 'CertExpired':
-                alert_id = f'cert-expired:{labels.get("cn", "unknown")}:node:{node_id}'
-            else:
-                alert_id = f"{alert_name.lower().replace('_', '-')}:node:{node_id}"
+            # Remap UpperCamelCase alert names to internal alert id format.
+            alert_id = build_alert_id(alert_name, labels, node_id)
 
             if status == 'firing':
                 value = CRITICAL
