@@ -85,7 +85,7 @@ Community (`nscom`) clusters keep sending alerts to dartagnan
 > (`/collect/api/services/mimir/alertmanager/api/v2/alerts`) with rotated
 > credentials.
 
-### Customimze alert rules (experimental)
+### Customize alert rules (experimental)
 
 **This is an experimental feature, do not use in production.**
 Configuration may change on the future releases.
@@ -209,7 +209,7 @@ The key is an hash containing the following fields:
 - key `<name>`, a name for the target
 - value `<yaml_config>`, the YAML configuration for the target
 
-Example of a target configuration for the `postgresql1` module in JSON format:
+Example of a target configuration for the `postgresql1` module:
 ```
 cat target.yaml | redis-cli -x hset module/postgresql1/metrics_targets postgres
 ```
@@ -218,11 +218,14 @@ Content of the `target.yaml` file:
 ```yaml
 - targets:
   - 10.5.4.1:9187
-  labels:
-    module_id: postresql1
 ```
 
-The configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
+The module ID in the Redis key is authoritative. The provisioner creates a
+`labels` mapping when needed and sets both `module_id: postgresql1` and
+`target_type: postgres`. A conflicting publisher-supplied `module_id` is
+overwritten with a warning; a non-mapping `labels` value rejects that target
+field. The resulting YAML file is named
+`prometheus.d/provision_<module_id>_<name>.yml`.
 
 #### metrics-alert-rules-changed event
 
@@ -250,8 +253,9 @@ the `metrics` module create a group around one alert.
 | Complete Prometheus file (`groups:`) | Multiple related groups or alerts |
 | Single alert rule (`alert` and `expr`) | One independently managed alert |
 
-A complete rule file preserves the supplied group names and can contain
-multiple groups, each with one or more alerts.
+A complete rule file can contain multiple groups, each with one or more alerts.
+Authored group names are local identifiers; the provisioner rewrites them into
+the reserved `ns8:` namespace.
 
 Complete rule-file format:
 
@@ -260,7 +264,7 @@ groups:
 - name: postgresql.rules
   rules:
   - alert: PostgresqlDown
-    expr: up{module_id="postgresql1", target_type="postgres"} == 0
+    expr: up{target_type="postgres"} == 0
     for: 5m
     labels:
       severity: critical
@@ -276,7 +280,7 @@ Single-rule format:
 
 ```yaml
 alert: PostgresqlDown
-expr: up{module_id="postgresql1", target_type="postgres"} == 0
+expr: up{target_type="postgres"} == 0
 for: 5m
 labels:
   severity: critical
@@ -288,26 +292,48 @@ annotations:
   description_it: "Il servizio PostgreSQL non è raggiungibile."
 ```
 
-The single-rule format is not restricted to a literal single YAML line. It can
-use all the alert fields shown above. The provisioner automatically normalizes
-it to the following structure, using the publishing module ID and Redis field
-name for the generated group name:
+The provisioner derives the module identity from the Redis owner. For a field
+named `postgres` under `module/postgresql1/metrics_alert_rules`, the full-file
+example above becomes:
 
 ```yaml
 groups:
-- name: <module_id>.<name>
+- name: ns8:postgresql1:postgres:postgresql.rules
   rules:
-  - <single alert rule>
+  - alert: PostgresqlDown
+    expr: up{module_id="postgresql1", target_type="postgres"} == 0
+    labels:
+      severity: critical
+      service: postgresql
+      module_id: postgresql1
 ```
 
-Use the single-rule format when each alert should have its own Redis field and
-lifecycle. Use a complete rule file when several related alerts or groups
-should be published and removed together.
+A single-rule payload uses `ns8:<module_id>:<name>`. Each authored group in a
+full-file payload uses
+`ns8:<module_id>:<name>:<local_group_name>`. Full payloads must use unique,
+non-empty local names and cannot author names beginning with the reserved
+`ns8:` prefix. The provisioner rejects duplicate local or effective group names
+instead of adding order-dependent suffixes, so names stay stable when groups
+are reordered.
+
+Every instant-vector and range-vector selector in a module rule is rewritten
+with the exact publishing `module_id`, using Prometheus's PromQL parser. Broader
+or conflicting matchers are replaced with a warning. Expressions without a
+selector are rejected because they cannot be proven to use module-owned
+metrics. The provisioner also injects the authoritative `module_id` into each
+alert's static labels, preserving identity when an aggregation removes input
+labels. Other labels are preserved.
+
+This strict scoping applies only to `metrics_alert_rules`. Built-in rules and
+metrics-local `module/<metrics_id>/custom_alerts` keep their authored
+expressions and labels, allowing node-wide and cluster-wide alerts.
 
 Publish a rule and signal its event:
 
     redis-cli -x hset module/postgresql1/metrics_alert_rules postgres <alerts.yml
-    redis-cli publish module/postgresql1/event/metrics-alert-rules-changed '{}'
+    redis-cli publish module/metrics1/event/metrics-alert-rules-changed '{}'
+
+Replace `metrics1` with the cluster's metrics module ID when it differs.
 
 Each Redis hash field produces exactly one file named
 `rules.d/provision_<module_id>_<name>.yml`. A complete payload can therefore
@@ -321,21 +347,26 @@ The event provisions all rules, reloads active Prometheus instances with
 not start an inactive Prometheus service.
 
 Malformed YAML, unsupported schemas, recording rules, and rules rejected by
-`promtool` are skipped. An invalid update does not replace its previous valid
-file or prevent other valid fields from being installed. Missing or unsupported
-`severity` labels, incomplete bilingual annotations, and references to unknown
-metrics generate warnings without rejecting the rule. Metric checks fail open
-if the Prometheus parser or metric-name APIs are unavailable.
+`promtool` are skipped. Invalid file names, duplicate/reserved group names,
+unscopable expressions, and invalid label mappings are also rejected. An
+invalid update does not replace its previous valid file or prevent other valid
+fields from being installed. Missing or unsupported `severity` labels,
+incomplete bilingual annotations, and references to unknown metrics generate
+warnings without rejecting the rule. Metric checks fail open if the Prometheus
+parser or metric-name APIs are unavailable.
 
-All labels are preserved without injecting `module_id`, `source_module_id`, a
-default severity, or other labels. Duplicate alert names are accepted with a
-warning. Use a unique module/application prefix, such as `PostgresqlDown`, to
-avoid ambiguous Alertmanager grouping and external alert IDs.
+The effective module-alert identity is `(alertname, module_id)`. The same alert
+name from two module instances is expected; a duplicate identity within one
+instance generates a warning but remains loadable. Use a module/application
+prefix such as `PostgresqlDown` to make alert names readable.
 
 Module-provided alerts follow the existing default Alertmanager route. They are
 forwarded to Nethesis portals and Mimir when subscription credentials are
 available. Critical alerts are also sent by email when mail notifications are
-configured.
+configured. Alertmanager groups by `alertname`, `node`, and `module_id`, and
+inhibits warnings only when both `alertname` and `module_id` match. For unknown
+alert names, `alert-proxy` includes a non-empty module ID in its generic external
+ID: `<alertname>:<module_id>:node:<node_id>`.
 
 
 ### Provisioning Grafana
