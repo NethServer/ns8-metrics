@@ -7,6 +7,7 @@ Suite Teardown    Clean up alert-rule tests
 *** Variables ***
 ${MID}    metrics1
 ${PROVIDER}    testmodule1
+${PROVIDER2}    testmodule2
 ${REMOTE_FIXTURES}    /tmp/metrics-alert-rule-tests
 ${PROMETHEUS_API}    http://127.0.0.1:9091
 @{RULE_FIXTURES}
@@ -19,6 +20,9 @@ ${PROMETHEUS_API}    http://127.0.0.1:9091
 ...    recording.yml
 ...    duplicate.yml
 ...    custom.yml
+...    no-selector.yml
+...    duplicate-groups.yml
+...    reserved-group.yml
 
 *** Test Cases ***
 Publish full and single alert-rule formats
@@ -36,10 +40,22 @@ Publish full and single alert-rule formats
     ${reload_success} =    Prometheus metric value    prometheus_config_last_reload_successful
     Should Be Equal As Numbers    ${reload_success}    1
 
-Preserve labels and load both rules
-    Generated labels should be unchanged
+Scope provider rules and load both formats
+    Generated provider rule should be scoped
+    ...    ${PROVIDER}    full    ns8:${PROVIDER}:full:testmodule.rules
+    Generated provider rule should be scoped
+    ...    ${PROVIDER}    single    ns8:${PROVIDER}:single
     Prometheus rule should exist    TestModuleServiceDown
     Prometheus rule should exist    TestModuleConnectionsHigh
+
+Keep same alert name distinct across module instances
+    Publish provider rule    single    single.yml    ${PROVIDER2}
+
+    Signal alert-rule change
+
+    Generated provider rule should be scoped
+    ...    ${PROVIDER2}    single    ns8:${PROVIDER2}:single
+    Prometheus rule count should be    TestModuleConnectionsHigh    2
 
 Keep previous files after invalid updates
     ${full_checksum} =    Generated rule checksum    provision_${PROVIDER}_full.yml
@@ -65,25 +81,48 @@ Apply valid updates independently
     Generated rule checksum should be    provision_${PROVIDER}_single.yml    ${single_checksum}
     Prometheus rule should exist    TestModuleServiceRecovered
     Prometheus rule should exist    TestModuleConnectionsHigh
+    Wait Until Keyword Succeeds    10    1s
+    ...    Journal should contain    broader or conflicting module_id matcher
+
+Reject invalid group identities without replacing rules
+    ${full_checksum} =    Generated rule checksum    provision_${PROVIDER}_full.yml
+    Publish provider rule    full    reserved-group.yml
+
+    Signal alert-rule change
+
+    Generated rule checksum should be    provision_${PROVIDER}_full.yml    ${full_checksum}
+    Publish provider rule    full    duplicate-groups.yml
+
+    Signal alert-rule change
+
+    Generated rule checksum should be    provision_${PROVIDER}_full.yml    ${full_checksum}
+    Wait Until Keyword Succeeds    10    1s
+    ...    Journal should contain    reserved 'ns8:' prefix
+    Wait Until Keyword Succeeds    10    1s
+    ...    Journal should contain    duplicate local group name 'repeated'
 
 Accept warnings and duplicates but reject recordings
     Publish provider rule    warnings    warnings.yml
     Publish provider rule    recording    recording.yml
     Publish provider rule    duplicate    duplicate.yml
+    Publish provider rule    no-selector    no-selector.yml
 
     Signal alert-rule change
 
     Generated rule file should exist    provision_${PROVIDER}_warnings.yml
     Generated rule file should exist    provision_${PROVIDER}_duplicate.yml
     Generated rule file should not exist    provision_${PROVIDER}_recording.yml
+    Generated rule file should not exist    provision_${PROVIDER}_no-selector.yml
     Prometheus rule should exist    TestModuleUnknownMetric
-    Prometheus rule count should be    TestModuleConnectionsHigh    2
+    Prometheus rule count should be    TestModuleConnectionsHigh    3
     Wait Until Keyword Succeeds    10    1s
     ...    Journal should contain    unsupported severity 'info'
     Wait Until Keyword Succeeds    10    1s
     ...    Journal should contain    missing bilingual annotations
     Wait Until Keyword Succeeds    10    1s
-    ...    Journal should contain    duplicate alert name 'TestModuleConnectionsHigh'
+    ...    Journal should contain    duplicate alert identity ('TestModuleConnectionsHigh', module_id '${PROVIDER}')
+    Wait Until Keyword Succeeds    10    1s
+    ...    Journal should contain    no vector or range selector
     Wait Until Keyword Succeeds    10    1s
     ...    Journal should contain    unknown metric 'ns8_test_metric_that_does_not_exist'
 
@@ -96,6 +135,7 @@ Validate local custom alerts through the shared pipeline
     Generated rule file should exist    provision_${MID}_shared-valid.yml
     Generated rule file should not exist    provision_${MID}_shared-invalid.yml
     Prometheus rule should exist    TestMetricsCustomAlert
+    Generated custom rule should be unchanged
 
 Remove deleted rules without touching built-ins
     Execute Command    redis-cli HDEL module/${PROVIDER}/metrics_alert_rules full warnings
@@ -120,15 +160,15 @@ Prepare alert-rule tests
     END
 
 Clean up alert-rule tests
-    Execute Command    redis-cli DEL module/${PROVIDER}/metrics_alert_rules module/${PROVIDER}/environment
+    Execute Command    redis-cli DEL module/${PROVIDER}/metrics_alert_rules module/${PROVIDER}/environment module/${PROVIDER2}/metrics_alert_rules
     Execute Command    redis-cli HDEL module/${MID}/custom_alerts shared-valid shared-invalid
     Execute Command    redis-cli PUBLISH module/${MID}/event/metrics-alert-rules-changed '{}'
     Execute Command    rm -rf '${REMOTE_FIXTURES}'
 
 Publish provider rule
-    [Arguments]    ${name}    ${fixture}
+    [Arguments]    ${name}    ${fixture}    ${provider}=${PROVIDER}
     ${rc} =    Execute Command
-    ...    redis-cli -x HSET module/${PROVIDER}/metrics_alert_rules '${name}' < '${REMOTE_FIXTURES}/${fixture}'
+    ...    redis-cli -x HSET module/${provider}/metrics_alert_rules '${name}' < '${REMOTE_FIXTURES}/${fixture}'
     ...    return_rc=True    return_stdout=False
     Should Be Equal As Integers    ${rc}    0
 
@@ -172,9 +212,16 @@ Generated rule file should not exist
     ...    return_rc=True    return_stdout=False
     Should Not Be Equal As Integers    ${rc}    0
 
-Generated labels should be unchanged
+Generated provider rule should be scoped
+    [Arguments]    ${provider}    ${name}    ${group_name}
     ${rc} =    Execute Command
-    ...    runagent -m ${MID} python3 -c 'import yaml; d=yaml.safe_load(open("rules.d/provision_${PROVIDER}_full.yml")); labels=d["groups"][0]["rules"][0]["labels"]; assert labels == {"severity": "critical", "service": "test-service", "module_id": "preserved-label"}; assert "source_module_id" not in labels'
+    ...    runagent -m ${MID} python3 -c 'import yaml; d=yaml.safe_load(open("rules.d/provision_${provider}_${name}.yml")); g=d["groups"][0]; r=g["rules"][0]; assert g["name"] == "${group_name}"; assert r["labels"]["module_id"] == "${provider}"; assert "module_id=\\"${provider}\\"" in r["expr"]'
+    ...    return_rc=True    return_stdout=False
+    Should Be Equal As Integers    ${rc}    0
+
+Generated custom rule should be unchanged
+    ${rc} =    Execute Command
+    ...    runagent -m ${MID} python3 -c 'import yaml; d=yaml.safe_load(open("rules.d/provision_${MID}_shared-valid.yml")); r=d["groups"][0]["rules"][0]; assert r["expr"] == "prometheus_build_info == 1"; assert r["labels"] == {"severity": "warning", "origin": "custom-alerts"}'
     ...    return_rc=True    return_stdout=False
     Should Be Equal As Integers    ${rc}    0
 

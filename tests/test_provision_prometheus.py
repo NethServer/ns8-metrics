@@ -4,6 +4,7 @@
 #
 
 import contextlib
+import fnmatch
 import importlib.machinery
 import importlib.util
 import io
@@ -68,15 +69,19 @@ class FakeRedis:
         self.values = values or {}
 
     def scan_iter(self, pattern):
-        if pattern == "module/*/metrics_alert_rules":
-            return [
-                key for key in self.values
-                if key.endswith("/metrics_alert_rules")
-            ]
-        return []
+        return [key for key in self.values if fnmatch.fnmatch(key, pattern)]
 
     def hgetall(self, key):
         return self.values.get(key, {})
+
+    def hvals(self, key):
+        return list(self.values.get(key, {}).values())
+
+    def sismember(self, key, value):
+        return False
+
+    def exists(self, key):
+        return key in self.values
 
 
 class AlertRuleValidationTest(unittest.TestCase):
@@ -103,6 +108,202 @@ class AlertRuleValidationTest(unittest.TestCase):
             FULL_RULE, "postgresql1", "connections"
         )
         self.assertEqual(document, expected)
+
+    @mock.patch.object(provision_prometheus, "scope_promql_expression")
+    def test_scopes_single_rule_to_redis_owner(self, scope_expression):
+        scope_expression.return_value = 'up{module_id="postgresql1"} == 0'
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            document = provision_prometheus.normalize_alert_rule(
+                SINGLE_RULE,
+                "postgresql1",
+                "availability",
+                scoped=True,
+                redis_key="module/postgresql1/metrics_alert_rules",
+            )
+
+        group = document["groups"][0]
+        rule = group["rules"][0]
+        self.assertEqual(group["name"], "ns8:postgresql1:availability")
+        self.assertEqual(rule["expr"], 'up{module_id="postgresql1"} == 0')
+        self.assertEqual(rule["labels"]["module_id"], "postgresql1")
+        self.assertEqual(rule["labels"]["service"], "postgresql")
+        self.assertIn("using authoritative value 'postgresql1'", stderr.getvalue())
+
+    @mock.patch.object(provision_prometheus, "scope_promql_expression")
+    def test_rewrites_full_group_names_and_labels(self, scope_expression):
+        scope_expression.return_value = (
+            'pg_stat_activity_count{module_id="postgresql1"} > 100'
+        )
+        payload = FULL_RULE.replace(
+            "  rules:", "  labels:\n    module_id: another-module\n  rules:"
+        )
+
+        document = provision_prometheus.normalize_alert_rule(
+            payload,
+            "postgresql1",
+            "connections",
+            scoped=True,
+            redis_key="module/postgresql1/metrics_alert_rules",
+        )
+
+        group = document["groups"][0]
+        rule = group["rules"][0]
+        self.assertEqual(
+            group["name"],
+            "ns8:postgresql1:connections:postgresql.rules",
+        )
+        self.assertEqual(group["labels"]["module_id"], "postgresql1")
+        self.assertEqual(rule["labels"]["module_id"], "postgresql1")
+
+    @mock.patch.object(provision_prometheus, "scope_promql_expression")
+    def test_effective_group_names_do_not_depend_on_order(self, scope_expression):
+        scope_expression.side_effect = lambda expression, module_id, source=None: expression
+        payload = (
+            "groups:\n"
+            "- name: availability\n"
+            "  rules:\n"
+            "  - alert: Available\n"
+            "    expr: up\n"
+            "- name: capacity\n"
+            "  rules:\n"
+            "  - alert: Capacity\n"
+            "    expr: disk_free_bytes\n"
+        )
+        reordered = payload.replace(
+            "- name: availability\n"
+            "  rules:\n"
+            "  - alert: Available\n"
+            "    expr: up\n"
+            "- name: capacity\n"
+            "  rules:\n"
+            "  - alert: Capacity\n"
+            "    expr: disk_free_bytes\n",
+            "- name: capacity\n"
+            "  rules:\n"
+            "  - alert: Capacity\n"
+            "    expr: disk_free_bytes\n"
+            "- name: availability\n"
+            "  rules:\n"
+            "  - alert: Available\n"
+            "    expr: up\n",
+        )
+
+        names = {
+            group["name"]
+            for group in provision_prometheus.normalize_alert_rule(
+                payload, "postgresql1", "database", scoped=True
+            )["groups"]
+        }
+        reordered_names = {
+            group["name"]
+            for group in provision_prometheus.normalize_alert_rule(
+                reordered, "postgresql1", "database", scoped=True
+            )["groups"]
+        }
+
+        self.assertEqual(names, reordered_names)
+        self.assertEqual(
+            names,
+            {
+                "ns8:postgresql1:database:availability",
+                "ns8:postgresql1:database:capacity",
+            },
+        )
+
+    def test_rejects_reserved_and_duplicate_group_names(self):
+        payloads = (
+            "groups:\n- name: ns8:reserved\n  rules: []\n",
+            "groups:\n- name: repeated\n  rules: []\n"
+            "- name: repeated\n  rules: []\n",
+        )
+
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                with self.assertRaises(provision_prometheus.RuleValidationError):
+                    provision_prometheus.normalize_alert_rule(
+                        payload, "postgresql1", "invalid", scoped=True
+                    )
+
+    def test_scopes_promql_selectors_with_promtool(self):
+        cases = (
+            (
+                "up == 0",
+                "up == 0",
+                "up == 0",
+                'up{module_id="postgresql1"} == 0',
+            ),
+            (
+                "rate(requests_total[5m]) > 1",
+                "rate(requests_total[5m]) > 1",
+                "rate(requests_total[5m]) > 1",
+                'rate(requests_total{module_id="postgresql1"}[5m]) > 1',
+            ),
+            (
+                "sum(up) + rate(requests_total[5m])",
+                "sum(up) + rate(requests_total[5m])",
+                "sum(up) + rate(requests_total[5m])",
+                'sum(up{module_id="postgresql1"}) + '
+                'rate(requests_total{module_id="postgresql1"}[5m])',
+            ),
+            (
+                "absent(up)",
+                "absent(up)",
+                "absent(up)",
+                'absent(up{module_id="postgresql1"})',
+            ),
+        )
+
+        for authored, formatted, matcher_free, expected in cases:
+            with self.subTest(authored=authored), mock.patch.object(
+                provision_prometheus,
+                "_run_promtool_command",
+                side_effect=(formatted, matcher_free, expected),
+            ) as promtool:
+                self.assertEqual(
+                    provision_prometheus.scope_promql_expression(
+                        authored, "postgresql1"
+                    ),
+                    expected,
+                )
+                self.assertEqual(promtool.call_count, 3)
+
+    def test_replaces_conflicting_promql_matcher_with_warning(self):
+        source = provision_prometheus.AlertRuleSource(
+            "postgresql1",
+            "availability",
+            "",
+            "module/postgresql1/metrics_alert_rules",
+        )
+        stderr = io.StringIO()
+        with mock.patch.object(
+            provision_prometheus,
+            "_run_promtool_command",
+            side_effect=(
+                'up{module_id=~"postgresql.*"} == 0',
+                "up == 0",
+                'up{module_id="postgresql1"} == 0',
+            ),
+        ), contextlib.redirect_stderr(stderr):
+            expression = provision_prometheus.scope_promql_expression(
+                'up{module_id=~"postgresql.*"} == 0',
+                "postgresql1",
+                source,
+            )
+
+        self.assertEqual(expression, 'up{module_id="postgresql1"} == 0')
+        self.assertIn("broader or conflicting", stderr.getvalue())
+
+    def test_rejects_promql_without_selectors(self):
+        with mock.patch.object(
+            provision_prometheus,
+            "_run_promtool_command",
+            side_effect=("vector(1)", "vector(1)", "vector(1)"),
+        ), self.assertRaisesRegex(
+            provision_prometheus.RuleValidationError, "no vector or range selector"
+        ):
+            provision_prometheus.scope_promql_expression("vector(1)", "postgresql1")
 
     def test_rejects_unsupported_rule_schemas(self):
         invalid_payloads = (
@@ -172,8 +373,17 @@ class AlertRuleProvisioningTest(unittest.TestCase):
         provision_prometheus.RULES_DIR = Path("rules.d")
         self.previous_module_id = os.environ.get("MODULE_ID")
         os.environ["MODULE_ID"] = "metrics1"
+        self.scope_patcher = mock.patch.object(
+            provision_prometheus,
+            "scope_promql_expression",
+            side_effect=lambda expression, module_id, source=None: (
+                f"{expression} scoped-to {module_id}"
+            ),
+        )
+        self.scope_patcher.start()
 
     def tearDown(self):
+        self.scope_patcher.stop()
         if self.previous_module_id is None:
             os.environ.pop("MODULE_ID", None)
         else:
@@ -228,6 +438,25 @@ class AlertRuleProvisioningTest(unittest.TestCase):
         self.assertEqual(path.read_bytes(), previous)
         self.assertIn("previous valid file retained", stderr.getvalue())
         self.assertEqual(promtool.call_count, 1)
+
+    @mock.patch.object(provision_prometheus, "_run_promtool")
+    def test_invalid_group_update_keeps_previous_valid_file(self, promtool):
+        key = "module/postgresql1/metrics_alert_rules"
+        redis = FakeRedis({key: {"availability": SINGLE_RULE}})
+        provision_prometheus.provision(redis)
+        path = Path("rules.d/provision_postgresql1_availability.yml")
+        previous = path.read_bytes()
+
+        redis.values[key]["availability"] = (
+            "groups:\n- name: ns8:reserved\n  rules: []\n"
+        )
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            provision_prometheus.provision(redis)
+
+        self.assertEqual(path.read_bytes(), previous)
+        self.assertIn("reserved 'ns8:' prefix", stderr.getvalue())
+        self.assertIn("previous valid file retained", stderr.getvalue())
 
     @mock.patch.object(provision_prometheus, "_run_promtool")
     def test_non_utf8_update_keeps_previous_valid_file(self, promtool):
@@ -360,6 +589,54 @@ class AlertRuleProvisioningTest(unittest.TestCase):
         self.assertFalse(Path("rules.d/provision_postgresql1_invalid.yml").exists())
         self.assertIn("invalid PromQL", stderr.getvalue())
 
+    @mock.patch.object(provision_prometheus, "_run_promtool")
+    def test_duplicate_identity_is_per_module(self, promtool):
+        redis = FakeRedis({
+            "module/postgresql1/metrics_alert_rules": {
+                "first": SINGLE_RULE,
+                "second": SINGLE_RULE,
+            },
+            "module/postgresql2/metrics_alert_rules": {
+                "first": SINGLE_RULE,
+            },
+        })
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            provision_prometheus.provision(redis)
+
+        warning = stderr.getvalue()
+        self.assertIn(
+            "duplicate alert identity ('PostgresqlDown', module_id 'postgresql1')",
+            warning,
+        )
+        self.assertNotIn(
+            "duplicate alert identity ('PostgresqlDown', module_id 'postgresql2')",
+            warning,
+        )
+
+    @mock.patch.object(provision_prometheus, "_run_promtool")
+    def test_effective_group_collisions_reject_both_custom_updates(self, promtool):
+        custom_rule = (
+            "groups:\n- name: custom.rules\n  rules:\n"
+            "  - alert: LocalAlert\n    expr: up\n"
+        )
+        redis = FakeRedis({
+            "module/metrics1/custom_alerts": {
+                "first": custom_rule,
+                "second": custom_rule,
+            }
+        })
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stderr(stderr):
+            provision_prometheus.provision(redis)
+
+        self.assertFalse(Path("rules.d/provision_metrics1_first.yml").exists())
+        self.assertFalse(Path("rules.d/provision_metrics1_second.yml").exists())
+        self.assertIn("effective group name 'custom.rules'", stderr.getvalue())
+        promtool.assert_not_called()
+
 
 class MetricReferenceCheckTest(unittest.TestCase):
     def test_handles_absent_dynamic_and_exact_name_selectors(self):
@@ -478,6 +755,75 @@ class ProvisionPrometheusEntrypointTest(unittest.TestCase):
             ],
         )
         check_metric_references.assert_called_once_with("raw-client")
+
+    def test_enforces_target_and_alertmanager_module_identity(self):
+        redis = FakeRedis({
+            "module/app1/metrics_targets": {
+                "missing": "- targets: [localhost:9000]\n",
+                "conflict": (
+                    "- targets: [localhost:9001]\n"
+                    "  labels:\n"
+                    "    module_id: another-app\n"
+                    "    custom: preserved\n"
+                ),
+                "invalid": (
+                    "- targets: [localhost:9002]\n"
+                    "  labels: not-a-mapping\n"
+                ),
+            }
+        })
+        fake_agent = types.ModuleType("agent")
+        fake_agent.redis_connect = mock.Mock(side_effect=(redis, redis))
+        fake_agent.get_smarthost_settings = mock.Mock(
+            return_value={"enabled": False}
+        )
+        fake_agent.get_hostname = mock.Mock(return_value="node.example.org")
+        fake_alert_rules = types.ModuleType("metrics_alert_rules")
+        fake_alert_rules.provision = mock.Mock()
+        fake_alert_rules.check_metric_references = mock.Mock()
+        script = Path(__file__).parents[1] / "imageroot/bin/provision-prometheus"
+        stderr = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            sys.modules,
+            {"agent": fake_agent, "metrics_alert_rules": fake_alert_rules},
+        ), mock.patch.dict(
+            os.environ, {"MODULE_ID": "metrics1"}
+        ), mock.patch.object(
+            sys, "argv", [str(script)]
+        ), contextlib.chdir(
+            directory
+        ), contextlib.redirect_stderr(
+            stderr
+        ):
+            runpy.run_path(str(script), run_name="__main__")
+
+            missing = yaml.safe_load(
+                Path("prometheus.d/provision_app1_missing.yml").read_text()
+            )
+            conflict = yaml.safe_load(
+                Path("prometheus.d/provision_app1_conflict.yml").read_text()
+            )
+            alertmanager = yaml.safe_load(Path("alertmanager.yml").read_text())
+
+            self.assertEqual(missing[0]["labels"]["module_id"], "app1")
+            self.assertEqual(missing[0]["labels"]["target_type"], "missing")
+            self.assertEqual(conflict[0]["labels"]["module_id"], "app1")
+            self.assertEqual(conflict[0]["labels"]["custom"], "preserved")
+            self.assertFalse(
+                Path("prometheus.d/provision_app1_invalid.yml").exists()
+            )
+            self.assertEqual(
+                alertmanager["route"]["group_by"],
+                ["alertname", "node", "module_id"],
+            )
+            self.assertEqual(
+                alertmanager["inhibit_rules"][0]["equal"],
+                ["alertname", "module_id"],
+            )
+
+        self.assertIn("using authoritative value 'app1'", stderr.getvalue())
+        self.assertIn("labels must be a mapping", stderr.getvalue())
 
 
 if __name__ == "__main__":

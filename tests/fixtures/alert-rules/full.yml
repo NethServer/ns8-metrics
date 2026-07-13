@@ -2,7 +2,7 @@ groups:
 - name: testmodule.rules
   rules:
   - alert: TestModuleServiceDown
-    expr: up{module_id="testmodule1"} == 0
+    expr: up == 0
     for: 5m
     labels:
       severity: critical

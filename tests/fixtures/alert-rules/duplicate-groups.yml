@@ -1,0 +1,9 @@
+groups:
+- name: repeated
+  rules:
+  - alert: TestModuleRepeatedOne
+    expr: up
+- name: repeated
+  rules:
+  - alert: TestModuleRepeatedTwo
+    expr: up

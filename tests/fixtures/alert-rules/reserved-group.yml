@@ -1,0 +1,5 @@
+groups:
+- name: ns8:reserved
+  rules:
+  - alert: TestModuleReservedGroup
+    expr: up

@@ -2,7 +2,7 @@ groups:
 - name: testmodule.rules
   rules:
   - alert: TestModuleServiceRecovered
-    expr: up{module_id="testmodule1"} == 1
+    expr: up{module_id=~"testmodule.*"} == 1
     for: 1m
     labels:
       severity: warning

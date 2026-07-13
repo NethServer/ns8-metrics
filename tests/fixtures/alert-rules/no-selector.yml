@@ -1,0 +1,9 @@
+alert: TestModuleScalarExpression
+expr: vector(1)
+labels:
+  severity: warning
+annotations:
+  summary_en: "Scalar test expression"
+  summary_it: "Espressione scalare di test"
+  description_en: "This expression cannot be scoped to module metrics."
+  description_it: "Questa espressione non può essere limitata al modulo."
