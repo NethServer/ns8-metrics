@@ -29,6 +29,7 @@ REQUIRED_ANNOTATIONS = {
     "description_it",
 }
 
+
 class RuleValidationError(ValueError):
     """An alert rule cannot be safely installed."""
 
@@ -48,6 +49,10 @@ class AlertRuleSource:
     @property
     def filename(self):
         return generated_rule_filename(self.module_id, self.name)
+
+    @property
+    def is_module_rule(self):
+        return self.redis_key.endswith("/metrics_alert_rules")
 
 
 def _as_text(value):
@@ -180,6 +185,10 @@ def _validate_rule_schema(document):
             raise RuleValidationError(
                 f"group {group.get('name', group_index)!r} must have a rules list"
             )
+        if "labels" in group and not isinstance(group["labels"], dict):
+            raise RuleValidationError(
+                f"group {group['name']!r} labels must be a mapping"
+            )
 
         for rule_index, rule in enumerate(group["rules"]):
             location = f"group {group['name']!r}, rule {rule_index}"
@@ -197,7 +206,40 @@ def _validate_rule_schema(document):
                 raise RuleValidationError(f"{location} annotations must be a mapping")
 
 
-def normalize_alert_rule(payload, module_id, name):
+def _warn_module_id_override(source, location, previous):
+    print(
+        f"Warning: {location} from {source.redis_key} field {source.name!r} "
+        f"has module_id {previous!r}; using authoritative value "
+        f"{source.module_id!r}",
+        file=sys.stderr,
+    )
+
+
+def _scope_module_rule(document, source):
+    for group in document["groups"]:
+        group_labels = group.get("labels")
+        if group_labels is not None:
+            previous = group_labels.get("module_id")
+            if previous is not None and previous != source.module_id:
+                _warn_module_id_override(
+                    source, f"group {group['name']!r}", previous
+                )
+            group_labels["module_id"] = source.module_id
+
+        for rule in group["rules"]:
+            rule["expr"] = scope_promql_expression(
+                rule["expr"], source.module_id, source
+            )
+            labels = rule.setdefault("labels", {})
+            previous = labels.get("module_id")
+            if previous is not None and previous != source.module_id:
+                _warn_module_id_override(
+                    source, f"alert {rule['alert']!r}", previous
+                )
+            labels["module_id"] = source.module_id
+
+
+def normalize_alert_rule(payload, module_id, name, scoped=False, redis_key=None):
     try:
         data = yaml.safe_load(payload)
     # PyYAML can propagate built-in exceptions for malformed implicit values
@@ -209,7 +251,8 @@ def normalize_alert_rule(payload, module_id, name):
     if not isinstance(data, dict):
         raise RuleValidationError("payload must be a mapping")
 
-    if "groups" in data:
+    single_rule = "groups" not in data
+    if not single_rule:
         document = data
     elif "record" in data:
         raise RuleValidationError("recording rules are not supported")
@@ -217,7 +260,11 @@ def normalize_alert_rule(payload, module_id, name):
         document = {
             "groups": [
                 {
-                    "name": f"{module_id}.{name}",
+                    "name": (
+                        f"ns8:{module_id}:{name}"
+                        if scoped
+                        else f"{module_id}.{name}"
+                    ),
                     "rules": [data],
                 }
             ]
@@ -228,6 +275,32 @@ def normalize_alert_rule(payload, module_id, name):
         )
 
     _validate_rule_schema(document)
+    if not single_rule:
+        local_names = set()
+        for group in document["groups"]:
+            local_name = group["name"].strip()
+            if local_name.startswith("ns8:"):
+                raise RuleValidationError(
+                    f"group name {local_name!r} uses the reserved 'ns8:' prefix"
+                )
+            if local_name in local_names:
+                raise RuleValidationError(
+                    f"duplicate local group name {local_name!r}"
+                )
+            local_names.add(local_name)
+
+    source = AlertRuleSource(
+        module_id,
+        name,
+        payload,
+        redis_key or f"module/{module_id}/metrics_alert_rules",
+    )
+    if scoped:
+        if not single_rule:
+            for group in document["groups"]:
+                local_name = group["name"].strip()
+                group["name"] = f"ns8:{module_id}:{name}:{local_name}"
+        _scope_module_rule(document, source)
     return document
 
 
@@ -268,7 +341,7 @@ def warn_incomplete_rules(document, source):
             )
 
 
-def _run_promtool(candidate_directory, candidate_name):
+def _run_promtool_command(arguments, candidate_directory=None):
     image = os.environ.get("PROMETHEUS_IMAGE")
     if not image:
         raise RuleValidationError("PROMETHEUS_IMAGE is not set")
@@ -278,13 +351,12 @@ def _run_promtool(candidate_directory, candidate_name):
         "run",
         "--rm",
         "--network=none",
-        f"--volume={Path(candidate_directory).resolve()}:/rules:ro,z",
-        "--entrypoint=/bin/promtool",
-        image,
-        "check",
-        "rules",
-        f"/rules/{candidate_name}",
     ]
+    if candidate_directory is not None:
+        command.append(
+            f"--volume={Path(candidate_directory).resolve()}:/rules:ro,z"
+        )
+    command.extend(["--entrypoint=/bin/promtool", image, *arguments])
     try:
         result = subprocess.run(
             command,
@@ -299,17 +371,103 @@ def _run_promtool(candidate_directory, candidate_name):
     if result.returncode != 0:
         output = result.stdout.strip() or f"promtool exited with status {result.returncode}"
         raise RuleValidationError(output)
+    return result.stdout.strip()
 
 
-def _install_alert_rule(source):
+def _run_promtool(candidate_directory, candidate_name):
+    _run_promtool_command(
+        ["check", "rules", f"/rules/{candidate_name}"],
+        candidate_directory,
+    )
+
+
+def scope_promql_expression(expression, module_id, source=None):
+    """Force the publishing module ID onto every PromQL selector."""
+    formatted = _run_promtool_command(
+        ["--experimental", "promql", "format", expression]
+    )
+    without_module_id = _run_promtool_command(
+        [
+            "--experimental",
+            "promql",
+            "label-matchers",
+            "delete",
+            formatted,
+            "module_id",
+        ]
+    )
+    scoped = _run_promtool_command(
+        [
+            "--experimental",
+            "promql",
+            "label-matchers",
+            "set",
+            without_module_id,
+            "module_id",
+            module_id,
+        ]
+    )
+    if scoped == without_module_id:
+        raise RuleValidationError(
+            "expression has no vector or range selector to scope by module_id"
+        )
+    if source is not None and without_module_id != formatted and scoped != formatted:
+        print(
+            f"Warning: expression from {source.redis_key} field "
+            f"{source.name!r} supplied a broader or conflicting module_id "
+            f"matcher; using authoritative value {module_id!r}",
+            file=sys.stderr,
+        )
+    return scoped
+
+
+def _prepare_alert_rules(sources):
+    prepared = {}
+    errors = {}
+    group_owners = {}
+
+    for source in sources:
+        filename = source.filename
+        try:
+            if source.payload_error:
+                raise RuleValidationError(source.payload_error)
+            document = normalize_alert_rule(
+                source.payload,
+                source.module_id,
+                source.name,
+                scoped=source.is_module_rule,
+                redis_key=source.redis_key,
+            )
+            warn_incomplete_rules(document, source)
+        except Exception as ex:
+            errors[filename] = ex
+            continue
+
+        prepared[filename] = document
+        for group in document["groups"]:
+            group_name = group["name"]
+            previous = group_owners.get(group_name)
+            if previous is None:
+                group_owners[group_name] = source
+                continue
+
+            error = RuleValidationError(
+                f"effective group name {group_name!r} conflicts with "
+                f"{previous.redis_key} field {previous.name!r}"
+            )
+            errors[filename] = error
+            errors[previous.filename] = error
+
+    return prepared, errors
+
+
+def _install_alert_rule(source, document, preparation_error=None):
     target = RULES_DIR / source.filename
     retained = target.is_file()
 
     try:
-        if source.payload_error:
-            raise RuleValidationError(source.payload_error)
-        document = normalize_alert_rule(source.payload, source.module_id, source.name)
-        warn_incomplete_rules(document, source)
+        if preparation_error is not None:
+            raise preparation_error
 
         with tempfile.TemporaryDirectory(prefix=".promtool-", dir=".") as candidate_dir:
             os.chmod(candidate_dir, 0o755)
@@ -346,7 +504,7 @@ def _clean_up_generated_alert_rules(desired_filenames):
         old_custom_file.unlink()
 
 
-def warn_duplicate_alert_names():
+def warn_duplicate_alert_identities():
     occurrences = {}
     for path in sorted(RULES_DIR.glob("*.yml")):
         try:
@@ -360,12 +518,17 @@ def warn_duplicate_alert_names():
         for rule in _iter_alert_rules(document):
             name = rule.get("alert")
             if isinstance(name, str):
-                occurrences.setdefault(name, []).append(path.name)
+                labels = rule.get("labels", {})
+                module_id = labels.get("module_id", "")
+                identity = (name, str(module_id) if module_id is not None else "")
+                occurrences.setdefault(identity, []).append(path.name)
 
-    for alert_name, paths in sorted(occurrences.items()):
+    for (alert_name, module_id), paths in sorted(occurrences.items()):
         if len(paths) > 1:
+            module_detail = f", module_id {module_id!r}" if module_id else ""
             print(
-                f"Warning: duplicate alert name {alert_name!r} in "
+                f"Warning: duplicate alert identity ({alert_name!r}"
+                f"{module_detail}) in "
                 f"{', '.join(paths)}; module alerts should use a unique "
                 "module/application prefix",
                 file=sys.stderr,
@@ -375,10 +538,15 @@ def warn_duplicate_alert_names():
 def provision(redis_client):
     sources = discover_alert_rule_sources(redis_client)
     desired_filenames = {source.filename for source in sources}
+    prepared, errors = _prepare_alert_rules(sources)
     for source in sources:
-        _install_alert_rule(source)
+        _install_alert_rule(
+            source,
+            prepared.get(source.filename),
+            errors.get(source.filename),
+        )
     _clean_up_generated_alert_rules(desired_filenames)
-    warn_duplicate_alert_names()
+    warn_duplicate_alert_identities()
 
 
 def _prometheus_api_base():

@@ -16,7 +16,7 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
     'global': {},
     'route': {
         'receiver': 'default-receiver',
-        'group_by': ['alertname', 'node'],
+        'group_by': ['alertname', 'node', 'module_id'],
         'group_wait': '30s',
         'group_interval': '5m',
         'repeat_interval': '3h',
@@ -32,7 +32,7 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
         {
         'source_matchers': ['severity="critical"'],
         'target_matchers': ['severity="warning"'],
-        'equal': ['alertname']
+        'equal': ['alertname', 'module_id']
         }
     ],
     'receivers': [
@@ -79,9 +79,28 @@ def validate_and_generate_provider_configs(redis_client):
             file.write(f"    target_type: node\n")
             file.write(f"    node: {node_id}\n")
 
-    def _decorate_with_target_type_label(data, target_type):
-        for oitem in data:
-            oitem['labels']['target_type'] = target_type
+    def _decorate_provider_targets(data, module_id, target_type, redis_key):
+        if not isinstance(data, list):
+            raise ValueError("target configuration must be a list")
+        for index, item in enumerate(data):
+            if not isinstance(item, dict):
+                raise ValueError(f"target group {index} must be a mapping")
+            labels = item.get('labels')
+            if labels is None:
+                labels = {}
+                item['labels'] = labels
+            elif not isinstance(labels, dict):
+                raise ValueError(f"target group {index} labels must be a mapping")
+            previous_module_id = labels.get('module_id')
+            if previous_module_id is not None and previous_module_id != module_id:
+                print(
+                    f"Warning: target {target_type!r} from {redis_key} has "
+                    f"module_id {previous_module_id!r}; using authoritative "
+                    f"value {module_id!r}",
+                    file=sys.stderr,
+                )
+            labels['module_id'] = module_id
+            labels['target_type'] = target_type
 
     for module in redis_client.scan_iter("module/*/metrics_targets"):
         module_id = module.split('/')[1]
@@ -89,7 +108,7 @@ def validate_and_generate_provider_configs(redis_client):
         for db_key, db_val in targets.items():
             try:
                 data = yaml.safe_load(db_val)
-                _decorate_with_target_type_label(data, db_key)
+                _decorate_provider_targets(data, module_id, db_key, module)
             except Exception as ex:
                 print(f"Skipped target {db_key} for module {module_id}: {ex}", file=sys.stderr)
                 continue
