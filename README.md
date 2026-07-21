@@ -61,7 +61,8 @@ Configuration files are saved inside the state directory. The most important fil
 
 - prometheus.yml: Prometheus configuration
   - prometheus.d: directory containing node configuration files
-  - rules.d: directory containing custom alert rules
+  - rules.d: directory containing built-in, legacy custom, and generated
+    provider alert rules
 - alertmanager.yml: Alertmanager configuration
   - templates.d: directory containing custom alert templates
 - local.yml: Grafana configuration, if enabled
@@ -200,12 +201,19 @@ When a module wants to add a new target, it must use the `metrics-target-changed
 
 #### metrics-target-changed event
 
-The `provision-prometheus` script will search for the following key: `module/<module_id>/metrics_targets`.
-The key is an hash containing the following fields:
-- key `<name>`, a name for the target
-- value `<yaml_config>`, the YAML configuration for the target
+The `provision-prometheus` script searches for
+`module/<publisher_id>/metrics_targets`. The Redis hash contains:
 
-Example of a target configuration for the `postgresql1` module in JSON format:
+- field `<target_type>`, a stable name for the target type;
+- value `<yaml_config>`, a Prometheus `file_sd_config` YAML list.
+
+The publisher ID from the Redis key is authoritative. Provisioning creates a
+`labels` mapping when it is absent, sets `module_id` to the publisher ID, sets
+`target_type` to the Redis field name, and preserves other labels. A conflicting
+authored `module_id` is overwritten with a warning. A malformed field is skipped
+without affecting independent publishers.
+
+Example of a target configuration for the `postgresql1` module in YAML format:
 ```
 cat target.yaml | redis-cli -x hset module/postgresql1/metrics_targets postgres
 ```
@@ -215,10 +223,141 @@ Content of the `target.yaml` file:
 - targets:
   - 10.5.4.1:9187
   labels:
-    module_id: postresql1
+    module_id: postgresql1
 ```
 
-The configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
+The label may be omitted because it is derived from the key. The configuration
+is generated as:
+
+```text
+prometheus.d/provision_<publisher_id>_<target_type>.yml
+```
+
+After changing targets, the publisher emits `metrics-target-changed` from its
+own module event channel.
+
+### Module-provided alert rules
+
+A module instance publishes alert rules in:
+
+```text
+module/<publisher_id>/metrics_alert_rules
+```
+
+Each hash field is a stable `<rule_set_name>`. Its value is UTF-8 YAML in one of
+two forms. A complete rule file contains named groups:
+
+```yaml
+groups:
+- name: postgresql.rules
+  rules:
+  - alert: PostgresqlDown
+    expr: up{target_type="postgres"} == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary_en: PostgreSQL is down
+      summary_it: PostgreSQL non raggiungibile
+      description_en: The PostgreSQL exporter cannot be scraped.
+      description_it: Impossibile contattare l'exporter PostgreSQL.
+```
+
+A single alert rule omits the `groups` wrapper:
+
+```yaml
+alert: PostgresqlConnectionsHigh
+expr: pg_stat_activity_count{target_type="postgres"} > 100
+for: 10m
+labels:
+  severity: warning
+annotations:
+  summary_en: Too many PostgreSQL connections
+  summary_it: Troppe connessioni PostgreSQL
+  description_en: PostgreSQL has more than 100 active connections.
+  description_it: PostgreSQL ha più di 100 connessioni attive.
+```
+
+Publisher IDs and rule-set names may contain ASCII letters, digits, `.`, `_`,
+and `-`. A field generates:
+
+```text
+rules.d/provision_<publisher_id>_<rule_set_name>.yml
+```
+
+Single rules receive group name
+`ns8:<publisher_id>:<rule_set_name>`. Groups in complete files receive
+`ns8:<publisher_id>:<rule_set_name>:<local_group_name>`. Publishers must not
+use the reserved `ns8:` prefix for local group names.
+
+#### Identity and query scoping
+
+The Redis publisher ID is authoritative for targets, expressions, and alert
+labels. Every vector or range selector is rewritten with the exact publisher
+matcher. For example, a rule published by `postgresql1` changes from:
+
+```promql
+up{target_type="postgres"} == 0
+```
+
+to an equivalent canonical expression containing:
+
+```promql
+up{module_id="postgresql1",target_type="postgres"} == 0
+```
+
+The generated rule also has the static label `module_id: postgresql1`. This
+keeps the alert identity when an aggregation removes labels from its query
+result. Rules must use metrics belonging exclusively to their publisher;
+node-wide, cluster-wide, or cross-module rules belong in the built-in metrics
+rules.
+
+Existing exact `module_id` matchers are retained after canonical formatting.
+Broader, partial, negative, regular-expression, mixed, or conflicting matchers
+and labels are replaced with the publisher ID and produce a warning.
+Expressions without a vector or range selector are rejected.
+
+#### Validation, retention, and warnings
+
+Every field is validated independently. Invalid UTF-8, identifiers, YAML
+shapes, recording rules, PromQL, filename/group collisions, and failed
+`promtool` validation reject only their source field. If that exact field had a
+previous valid generated file, it is retained byte-for-byte. A new invalid
+field creates no file, while valid fields from other publishers continue to be
+installed.
+
+Missing or non-recommended severity values and incomplete bilingual
+annotations warn but remain loadable. Duplicate effective
+`(alertname, module_id)` identities warn without rejection. After a successful
+reload, concrete metric names not currently known by Prometheus also warn; API
+or parser failures defer this advisory check without unloading rules.
+
+After adding, replacing, or deleting alert-rule fields, the publisher emits an
+empty event from its own channel:
+
+```bash
+redis-cli -x hset \
+  module/postgresql1/metrics_alert_rules \
+  postgres < alerts.yml
+redis-cli publish \
+  module/postgresql1/event/metrics-alert-rules-changed '{}'
+```
+
+An active Prometheus instance is reloaded and verified, with a checked restart
+fallback. An inactive service remains stopped and consumes the generated files
+at its next normal start. Publishers should delete obsolete fields during
+uninstall, disable, or restore and emit the event again.
+
+Alertmanager groups module alerts by `alertname`, `node`, and `module_id`;
+critical-over-warning inhibition requires equal `alertname` and `module_id`.
+The same alert name from multiple module instances therefore remains distinct.
+For alert names without a built-in proxy mapping, the downstream identifier
+includes the non-empty module ID. Alerts continue through the configured
+portal, Mimir, and email paths.
+
+This publisher contract applies only to `metrics_alert_rules`. The existing
+experimental metrics-local `custom_alerts` interface remains a separate legacy
+path and is not migrated by this feature.
 
 
 ### Provisioning Grafana
