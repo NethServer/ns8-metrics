@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+
+import metrics_alert_rules
+import yaml
+
+
+PROMETHEUS_ORIGIN = "http://127.0.0.1:9091"
+PROMETHEUS_SERVICE = "prometheus.service"
+RELOAD_TIMEOUT_SECONDS = 30
+POLL_INTERVAL_SECONDS = 1
+HTTP_TIMEOUT_SECONDS = 5
+
+
+class RuleReloadError(RuntimeError):
+    """Provisioning or verified Prometheus activation failed."""
+
+
+class AdvisoryCheckError(RuntimeError):
+    """Optional metric-reference diagnostics could not be completed."""
+
+
+@dataclass(frozen=True)
+class ReloadState:
+    successful: float | None
+    timestamp: float | None
+
+
+@dataclass(frozen=True)
+class InstalledRuleExpression:
+    redis_key: str
+    rule_set_name: str
+    alert_name: str
+    expression: str
+
+    @property
+    def context(self):
+        return (
+            f"{self.redis_key} field {self.rule_set_name!r}, "
+            f"alert {self.alert_name!r}"
+        )
+
+
+def prometheus_base_url(prometheus_path=None):
+    if prometheus_path is None:
+        prometheus_path = os.environ.get("PROMETHEUS_PATH", "")
+    normalized_path = str(prometheus_path).strip("/")
+    if not normalized_path:
+        return PROMETHEUS_ORIGIN
+    return PROMETHEUS_ORIGIN + "/" + urllib.parse.quote(
+        normalized_path, safe="/"
+    )
+
+
+class PrometheusClient:
+    def __init__(
+        self,
+        base_url=None,
+        opener=urllib.request.urlopen,
+        timeout=HTTP_TIMEOUT_SECONDS,
+    ):
+        self.base_url = (base_url or prometheus_base_url()).rstrip("/")
+        self.opener = opener
+        self.timeout = timeout
+
+    def _request(self, path, data=None):
+        request = urllib.request.Request(
+            self.base_url + "/" + path.lstrip("/"),
+            data=data,
+            headers={
+                "Accept": "application/json" if path != "metrics" else "text/plain",
+            },
+            method="POST" if data is not None else "GET",
+        )
+        if data is not None:
+            request.add_header(
+                "Content-Type", "application/x-www-form-urlencoded"
+            )
+        with self.opener(request, timeout=self.timeout) as response:
+            return response.read()
+
+    def reload_state(self):
+        try:
+            payload = self._request("metrics").decode("utf-8")
+        except Exception as ex:
+            raise RuleReloadError(
+                f"cannot read Prometheus reload metrics: {ex}"
+            ) from ex
+        return parse_reload_metrics(payload)
+
+    def _json_request(self, path, data=None):
+        try:
+            payload = json.loads(self._request(path, data).decode("utf-8"))
+        except Exception as ex:
+            raise AdvisoryCheckError(
+                f"cannot read Prometheus API response from {path}: {ex}"
+            ) from ex
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            raise AdvisoryCheckError(
+                f"Prometheus API response from {path} is not successful"
+            )
+        if "data" not in payload:
+            raise AdvisoryCheckError(
+                f"Prometheus API response from {path} has no data"
+            )
+        return payload["data"]
+
+    def parse_query(self, expression):
+        data = urllib.parse.urlencode({"query": expression}).encode("ascii")
+        ast = self._json_request("api/v1/parse_query", data)
+        if not isinstance(ast, dict):
+            raise AdvisoryCheckError(
+                "Prometheus parse_query response has an unsupported AST"
+            )
+        return ast
+
+    def metric_names(self):
+        names = self._json_request("api/v1/label/__name__/values")
+        if not isinstance(names, list) or not all(
+            isinstance(name, str) for name in names
+        ):
+            raise AdvisoryCheckError(
+                "Prometheus metric-name response is not a string list"
+            )
+        return set(names)
+
+
+def parse_reload_metrics(payload):
+    values = {}
+    wanted = {
+        "prometheus_config_last_reload_successful",
+        "prometheus_config_last_reload_success_timestamp_seconds",
+    }
+    for line in payload.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        fields = stripped.split()
+        if len(fields) < 2:
+            continue
+        metric_name = fields[0].split("{", 1)[0]
+        if metric_name not in wanted:
+            continue
+        try:
+            values[metric_name] = float(fields[1])
+        except ValueError:
+            continue
+    return ReloadState(
+        successful=values.get("prometheus_config_last_reload_successful"),
+        timestamp=values.get(
+            "prometheus_config_last_reload_success_timestamp_seconds"
+        ),
+    )
+
+
+def _execute(command, executor):
+    try:
+        return executor(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            shell=False,
+        )
+    except OSError as ex:
+        raise RuleReloadError(f"cannot execute {command[0]}: {ex}") from ex
+
+
+def _run_required(command, action, executor):
+    result = _execute(command, executor)
+    if result.returncode != 0:
+        detail = (result.stdout or "").strip()
+        if detail:
+            raise RuleReloadError(f"{action} failed: {detail}")
+        raise RuleReloadError(
+            f"{action} failed with status {result.returncode}"
+        )
+    return result
+
+
+def _service_is_active(executor):
+    result = _execute(
+        [
+            "/usr/bin/systemctl",
+            "--user",
+            "--quiet",
+            "is-active",
+            PROMETHEUS_SERVICE,
+        ],
+        executor,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 3:
+        return False
+    detail = (result.stdout or "").strip()
+    raise RuleReloadError(
+        "cannot determine whether Prometheus is active"
+        + (f": {detail}" if detail else "")
+    )
+
+
+def _wait_for_verified_load(
+    client,
+    previous_timestamp,
+    timeout,
+    poll_interval,
+    monotonic,
+    sleep,
+):
+    deadline = monotonic() + timeout
+    last_problem = "reload metrics did not report success"
+    while True:
+        try:
+            state = client.reload_state()
+        except Exception as ex:
+            last_problem = str(ex)
+        else:
+            timestamp_advanced = (
+                previous_timestamp is None
+                or (
+                    state.timestamp is not None
+                    and state.timestamp > previous_timestamp
+                )
+            )
+            if state.successful == 1 and timestamp_advanced:
+                return True, None
+            if state.successful != 1:
+                last_problem = "reload-success metric is not 1"
+            elif state.timestamp is None:
+                last_problem = "reload-success timestamp is missing"
+            else:
+                last_problem = "reload-success timestamp did not advance"
+
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return False, last_problem
+        sleep(min(poll_interval, remaining))
+
+
+def _function_name(node):
+    function = node.get("func")
+    if isinstance(function, str):
+        return function
+    if isinstance(function, dict) and isinstance(function.get("name"), str):
+        return function["name"]
+    return None
+
+
+def _selector_metric_name(node):
+    name = node.get("name")
+    if isinstance(name, str) and name:
+        return name
+
+    matchers = node.get("matchers")
+    if not isinstance(matchers, list):
+        return None
+    exact_names = {
+        matcher.get("value")
+        for matcher in matchers
+        if isinstance(matcher, dict)
+        and matcher.get("name") == "__name__"
+        and matcher.get("type") == "="
+        and isinstance(matcher.get("value"), str)
+        and matcher["value"]
+    }
+    if len(exact_names) == 1:
+        return next(iter(exact_names))
+    return None
+
+
+def collect_static_metric_names(ast):
+    names = set()
+
+    def walk(node):
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+
+        node_type = node.get("type")
+        if node_type == "call" and _function_name(node) in {
+            "absent",
+            "absent_over_time",
+        }:
+            return
+        if node_type in {"vectorSelector", "matrixSelector"}:
+            metric_name = _selector_metric_name(node)
+            if metric_name is not None:
+                names.add(metric_name)
+            return
+        for value in node.values():
+            walk(value)
+
+    walk(ast)
+    return names
+
+
+def _installed_rule_expressions(rules_directory, warning):
+    expressions = []
+    try:
+        entries = metrics_alert_rules._generated_rule_entries(
+            rules_directory
+        )
+    except Exception as ex:
+        warning(
+            "Warning: metric-reference advisory check deferred: "
+            f"cannot scan generated provider rules: {ex}"
+        )
+        return expressions
+
+    for entry in entries:
+        if entry.is_symlink():
+            continue
+        try:
+            owner = metrics_alert_rules._read_rule_owner(entry.path)
+            if owner is None:
+                continue
+            with open(entry.path, encoding="utf-8") as stream:
+                document = yaml.safe_load(stream)
+        except Exception as ex:
+            warning(
+                "Warning: metric-reference advisory check skipped "
+                f"{entry.name}: {ex}"
+            )
+            continue
+        if not isinstance(document, dict):
+            continue
+        groups = document.get("groups")
+        if not isinstance(groups, list):
+            continue
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            rules = group.get("rules")
+            if not isinstance(rules, list):
+                continue
+            for rule in rules:
+                if not isinstance(rule, dict):
+                    continue
+                alert_name = rule.get("alert")
+                expression = rule.get("expr")
+                if isinstance(alert_name, str) and isinstance(expression, str):
+                    expressions.append(
+                        InstalledRuleExpression(
+                            redis_key=owner[0],
+                            rule_set_name=owner[1],
+                            alert_name=alert_name,
+                            expression=expression,
+                        )
+                    )
+    return expressions
+
+
+def check_metric_references(
+    client,
+    rules_directory="rules.d",
+    warning=None,
+):
+    if warning is None:
+        warning = metrics_alert_rules._stderr_warning
+    references = []
+    for source in _installed_rule_expressions(rules_directory, warning):
+        try:
+            ast = client.parse_query(source.expression)
+            metric_names = collect_static_metric_names(ast)
+        except Exception as ex:
+            warning(
+                "Warning: metric-reference advisory check skipped "
+                f"{source.context}: {ex}"
+            )
+            continue
+        references.extend(
+            (metric_name, source) for metric_name in sorted(metric_names)
+        )
+
+    if not references:
+        warning(
+            "Warning: metric-reference advisory check deferred: "
+            "no static metric names were found"
+        )
+        return
+
+    try:
+        known_names = client.metric_names()
+    except Exception as ex:
+        warning(
+            "Warning: metric-reference advisory check deferred: "
+            f"cannot fetch known metric names: {ex}"
+        )
+        return
+    if not known_names:
+        warning(
+            "Warning: metric-reference advisory check deferred: "
+            "Prometheus returned an empty metric-name set"
+        )
+        return
+
+    for metric_name, source in sorted(
+        references,
+        key=lambda item: (
+            item[1].redis_key,
+            item[1].rule_set_name,
+            item[1].alert_name,
+            item[0],
+        ),
+    ):
+        if metric_name not in known_names:
+            warning(
+                f"Warning: unknown metric {metric_name!r} referenced by "
+                f"{source.context}"
+            )
+
+
+def reload_prometheus_rules(
+    executor=subprocess.run,
+    client=None,
+    rules_directory="rules.d",
+    warning=None,
+    timeout=RELOAD_TIMEOUT_SECONDS,
+    poll_interval=POLL_INTERVAL_SECONDS,
+    monotonic=time.monotonic,
+    sleep=time.sleep,
+    advisory_checker=None,
+):
+    if warning is None:
+        warning = metrics_alert_rules._stderr_warning
+    if client is None:
+        client = PrometheusClient()
+
+    _run_required(
+        ["provision-prometheus"],
+        "Prometheus provisioning",
+        executor,
+    )
+    if not _service_is_active(executor):
+        return "inactive"
+
+    try:
+        previous_timestamp = client.reload_state().timestamp
+    except Exception as ex:
+        previous_timestamp = None
+        warning(
+            "Warning: cannot establish the pre-reload Prometheus timestamp; "
+            f"using restart fallback: {ex}"
+        )
+    else:
+        if previous_timestamp is None:
+            warning(
+                "Warning: pre-reload Prometheus timestamp is missing; "
+                "using restart fallback"
+            )
+
+    reload_verified = False
+    reload_problem = None
+    if previous_timestamp is not None:
+        reload_result = _execute(
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "reload",
+                PROMETHEUS_SERVICE,
+            ],
+            executor,
+        )
+        if reload_result.returncode == 0:
+            reload_verified, reload_problem = _wait_for_verified_load(
+                client,
+                previous_timestamp,
+                timeout,
+                poll_interval,
+                monotonic,
+                sleep,
+            )
+        else:
+            reload_problem = (reload_result.stdout or "").strip() or (
+                f"systemd reload exited with status {reload_result.returncode}"
+            )
+
+    if reload_verified:
+        result = "reloaded"
+    else:
+        if reload_problem:
+            warning(
+                "Warning: Prometheus reload was not verified; using restart "
+                f"fallback: {reload_problem}"
+            )
+        _run_required(
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "try-restart",
+                PROMETHEUS_SERVICE,
+            ],
+            "Prometheus restart fallback",
+            executor,
+        )
+        restart_verified, restart_problem = _wait_for_verified_load(
+            client,
+            previous_timestamp,
+            timeout,
+            poll_interval,
+            monotonic,
+            sleep,
+        )
+        if not restart_verified:
+            raise RuleReloadError(
+                "Prometheus restart fallback could not be verified: "
+                f"{restart_problem}"
+            )
+        result = "restarted"
+
+    try:
+        if advisory_checker is None:
+            check_metric_references(client, rules_directory, warning)
+        else:
+            advisory_checker()
+    except Exception as ex:
+        warning(
+            "Warning: metric-reference advisory check deferred: "
+            f"{ex}"
+        )
+    return result
+
+
+def main():
+    try:
+        reload_prometheus_rules()
+    except RuleReloadError as ex:
+        print(f"Error: {ex}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
