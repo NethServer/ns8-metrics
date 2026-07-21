@@ -138,7 +138,11 @@ async def handle_post_request(request):
             elif alert_name == 'CertExpired':
                 alert_id = f'cert-expired:{labels.get("cn", "unknown")}:node:{node_id}'
             else:
-                alert_id = f"{alert_name.lower().replace('_', '-')}:node:{node_id}"
+                module_id = labels.get('module_id')
+                if isinstance(module_id, str) and module_id:
+                    alert_id = f"{alert_name.lower().replace('_', '-')}:{module_id}:node:{node_id}"
+                else:
+                    alert_id = f"{alert_name.lower().replace('_', '-')}:node:{node_id}"
 
             if status == 'firing':
                 value = CRITICAL
