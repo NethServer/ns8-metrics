@@ -11,6 +11,7 @@ import sys
 from collections.abc import Mapping
 
 import agent
+import metrics_alert_rules
 import yaml
 
 ALERT_MANAGER_DEFAULT_CONFIG = {
@@ -251,6 +252,7 @@ def main():
     # This script can run before create-module, as event
     # handler. Ensure required dir exists:
     os.makedirs("prometheus.d", exist_ok=True)
+    os.makedirs("rules.d", exist_ok=True)
 
     # Generate providers configuration
     clean_up_old_provisioned_targets(redis_client)
@@ -260,6 +262,7 @@ def main():
 
     # Generate alertmanager configuration
     generate_alertmanagr_config(redis_client)
+    metrics_alert_rules.provision_module_alert_rules(redis_client)
     generate_custom_alertmanager_rules(redis_client)
     generate_custom_alertmanager_templates(redis_client)
 

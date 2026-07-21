@@ -15,6 +15,7 @@ import sys
 import tempfile
 import types
 import unittest
+import warnings
 from contextlib import contextmanager, redirect_stderr
 from unittest.mock import patch
 
@@ -38,18 +39,20 @@ def load_provision_prometheus():
     agent_module.redis_connect = lambda use_replica: None
     sys.modules['agent'] = agent_module
 
-    script_path = (
-        pathlib.Path(__file__).resolve().parents[1]
-        / 'imageroot'
-        / 'bin'
-        / 'provision-prometheus'
+    bin_directory = (
+        pathlib.Path(__file__).resolve().parents[1] / 'imageroot' / 'bin'
     )
+    script_path = bin_directory / 'provision-prometheus'
     loader = importlib.machinery.SourceFileLoader(
         'provision_prometheus', str(script_path)
     )
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
+    sys.path.insert(0, str(bin_directory))
+    try:
+        loader.exec_module(module)
+    finally:
+        sys.path.remove(str(bin_directory))
     return module
 
 
@@ -231,6 +234,47 @@ class AlertmanagerConfigurationTests(unittest.TestCase):
         self.assertEqual(
             alertmanager_config['inhibit_rules'][0]['equal'],
             ['alertname', 'module_id'],
+        )
+
+
+class ProvisioningIntegrationTests(unittest.TestCase):
+    def test_main_keeps_existing_custom_generator_and_creates_directories(self):
+        redis_client = FakeRedis(hashes={
+            'module/metrics1/custom_alerts': {
+                'local': 'alert: LocalAlert\nexpr: up == 0\n',
+            },
+        })
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            with working_directory(temp_directory):
+                with (
+                    patch.dict(os.environ, {'MODULE_ID': 'metrics1'}),
+                    patch.object(
+                        provision_prometheus.agent,
+                        'redis_connect',
+                        return_value=redis_client,
+                    ),
+                    patch.object(
+                        provision_prometheus.metrics_alert_rules,
+                        'provision_module_alert_rules',
+                    ) as provision_rules,
+                ):
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore', ResourceWarning)
+                        provision_prometheus.main()
+
+                self.assertTrue(pathlib.Path('prometheus.d').is_dir())
+                self.assertTrue(pathlib.Path('rules.d').is_dir())
+                self.assertTrue(pathlib.Path('rules.d/custom.yml').is_file())
+                provision_rules.assert_called_once_with(redis_client)
+
+                with open('rules.d/custom.yml', encoding='utf-8') as stream:
+                    custom_rules = yaml.safe_load(stream)
+
+        self.assertEqual(custom_rules['groups'][0]['name'], 'Custom')
+        self.assertEqual(
+            custom_rules['groups'][0]['rules'][0]['alert'],
+            'LocalAlert',
         )
 
 

@@ -6,12 +6,14 @@
 #
 
 import dataclasses
+import fnmatch
 import importlib.machinery
 import importlib.util
 import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -125,6 +127,60 @@ class PlaceholderPromtool:
                 return f"{expression} [module_id={value}]"
             return f"{expression} [[{label_name}={value}]]"
         raise AssertionError(f"unexpected promtool arguments: {arguments!r}")
+
+
+class ProvisioningPromtool(PlaceholderPromtool):
+    def __init__(self, check_error=None):
+        super().__init__()
+        self.check_error = check_error
+        self.checked_candidates = []
+
+    def check_rules(self, candidate_path):
+        with open(candidate_path, encoding="utf-8") as stream:
+            self.checked_candidates.append(stream.read())
+        if self.check_error is not None:
+            raise self.check_error
+        return "SUCCESS"
+
+
+class RuleRedis:
+    def __init__(
+        self,
+        hashes=None,
+        scan_order=None,
+        scan_error=None,
+        hgetall_error=None,
+    ):
+        self.hashes = hashes or {}
+        self.scan_order = scan_order
+        self.scan_error = scan_error
+        self.hgetall_error = hgetall_error
+        self.scan_patterns = []
+        self.read_keys = []
+
+    def scan_iter(self, pattern):
+        self.scan_patterns.append(pattern)
+        if self.scan_error is not None:
+            raise self.scan_error
+        keys = self.scan_order
+        if keys is None:
+            keys = [
+                key
+                for key in self.hashes
+                if fnmatch.fnmatch(
+                    key.decode("utf-8", errors="surrogateescape")
+                    if isinstance(key, bytes)
+                    else key,
+                    pattern,
+                )
+            ]
+        return iter(keys)
+
+    def hgetall(self, key):
+        self.read_keys.append(key)
+        if self.hgetall_error is not None:
+            raise self.hgetall_error
+        return self.hashes.get(key, {})
 
 
 class SourceAndSchemaTests(unittest.TestCase):
@@ -672,6 +728,378 @@ class PromqlRewriteTests(unittest.TestCase):
             )
 
 
+class ModuleRuleProvisioningTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_directory.cleanup)
+        self.rules_directory = pathlib.Path(self.temp_directory.name) / "rules.d"
+        self.rules_directory.mkdir()
+
+    def provision(
+        self,
+        redis_client,
+        runner=None,
+        transformer=metrics_alert_rules.transform_alert_rule,
+    ):
+        if runner is None:
+            runner = ProvisioningPromtool()
+        warnings = []
+        metrics_alert_rules.provision_module_alert_rules(
+            redis_client,
+            rules_directory=self.rules_directory,
+            promtool_runner=runner,
+            warning=warnings.append,
+            transformer=transformer,
+        )
+        return runner, warnings
+
+    def generated_path(self, publisher_id, rule_set_name):
+        filename = metrics_alert_rules.generated_rule_filename(
+            publisher_id, rule_set_name
+        )
+        return self.rules_directory / filename
+
+    def payload(self, alert_name):
+        return SINGLE_RULE.replace("PostgresqlDown", alert_name)
+
+    def test_discovers_only_provider_sources_in_deterministic_order(self):
+        hashes = {
+            "module/zeta1/metrics_alert_rules": {
+                "second": self.payload("ZetaSecond"),
+                "first": self.payload("ZetaFirst"),
+            },
+            "module/alpha1/metrics_alert_rules": {
+                b"availability": self.payload("AlphaAvailable").encode(),
+            },
+            "module/metrics1/custom_alerts": {
+                "local": self.payload("LocalAlert"),
+            },
+        }
+        redis_client = RuleRedis(
+            hashes=hashes,
+            scan_order=[
+                "module/zeta1/metrics_alert_rules",
+                "module/metrics1/custom_alerts",
+                "module/alpha1/metrics_alert_rules",
+            ],
+        )
+        warnings = []
+
+        sources = metrics_alert_rules.discover_alert_rule_sources(
+            redis_client, warnings.append
+        )
+
+        self.assertEqual(
+            [
+                (source.publisher_id, source.rule_set_name)
+                for source in sources
+            ],
+            [
+                ("alpha1", "availability"),
+                ("zeta1", "first"),
+                ("zeta1", "second"),
+            ],
+        )
+        self.assertEqual(
+            redis_client.scan_patterns,
+            ["module/*/metrics_alert_rules"],
+        )
+        self.assertNotIn(
+            "module/metrics1/custom_alerts", redis_client.read_keys
+        )
+        self.assertIn("invalid Redis key shape", "\n".join(warnings))
+
+    def test_isolates_invalid_utf8_and_identifiers(self):
+        long_name = "x" * 240
+        redis_client = RuleRedis(hashes={
+            "module/good1/metrics_alert_rules": {
+                "valid": self.payload("ValidAlert"),
+                "invalid-payload": b"\xff",
+                b"\xff": self.payload("InvalidField"),
+                "bad name": self.payload("InvalidName"),
+                long_name: self.payload("TooLong"),
+            },
+            "module/bad publisher/metrics_alert_rules": {
+                "valid": self.payload("InvalidPublisher"),
+            },
+        })
+
+        runner, warnings = self.provision(redis_client)
+
+        self.assertEqual(
+            sorted(path.name for path in self.rules_directory.glob("*.yml")),
+            ["provision_good1_valid.yml"],
+        )
+        warning_text = "\n".join(warnings)
+        self.assertIn("not valid UTF-8", warning_text)
+        self.assertIn("invalid publisher ID", warning_text)
+        self.assertIn("invalid rule-set name", warning_text)
+        self.assertIn("exceeds 255 bytes", warning_text)
+        self.assertEqual(len(runner.checked_candidates), 1)
+
+    def test_rejects_all_sources_in_a_filename_collision(self):
+        redis_client = RuleRedis(hashes={
+            "module/a_b/metrics_alert_rules": {
+                "c": self.payload("FirstAlert"),
+            },
+            "module/a/metrics_alert_rules": {
+                "b_c": self.payload("SecondAlert"),
+            },
+        })
+
+        runner, warnings = self.provision(redis_client)
+
+        self.assertFalse(self.generated_path("a_b", "c").exists())
+        self.assertEqual(runner.calls, [])
+        collision_warnings = [
+            message for message in warnings if "filename collision" in message
+        ]
+        self.assertEqual(len(collision_warnings), 2)
+        self.assertTrue(
+            all("module/a_b/" in message and "module/a/" in message
+                for message in collision_warnings)
+        )
+
+    def test_rejects_and_retains_effective_group_name_collisions(self):
+        redis_client = RuleRedis(hashes={
+            "module/first1/metrics_alert_rules": {
+                "availability": self.payload("FirstAlert"),
+            },
+            "module/second1/metrics_alert_rules": {
+                "availability": self.payload("SecondAlert"),
+            },
+        })
+        self.provision(redis_client)
+        first_path = self.generated_path("first1", "availability")
+        second_path = self.generated_path("second1", "availability")
+        previous = {
+            first_path: first_path.read_bytes(),
+            second_path: second_path.read_bytes(),
+        }
+
+        def colliding_transformer(source, runner, warning):
+            document = metrics_alert_rules.transform_alert_rule(
+                source, runner, warning
+            )
+            document["groups"][0]["name"] = "ns8:forced:collision"
+            return document
+
+        _runner, warnings = self.provision(
+            redis_client, transformer=colliding_transformer
+        )
+
+        self.assertEqual(first_path.read_bytes(), previous[first_path])
+        self.assertEqual(second_path.read_bytes(), previous[second_path])
+        collision_warnings = [
+            message for message in warnings
+            if "group-name collision" in message
+        ]
+        self.assertEqual(len(collision_warnings), 2)
+
+    def test_retains_only_an_exact_source_previous_valid_file(self):
+        first_redis = RuleRedis(hashes={
+            "module/a_b/metrics_alert_rules": {
+                "c": self.payload("InitialAlert"),
+            },
+        })
+        self.provision(first_redis)
+        output_path = self.generated_path("a_b", "c")
+        previous = output_path.read_bytes()
+        self.assertEqual(
+            metrics_alert_rules._read_rule_owner(output_path),
+            ("module/a_b/metrics_alert_rules", "c"),
+        )
+        self.assertTrue(previous.startswith(
+            b'# ns8-metrics-source: {"field":"c",'
+        ))
+
+        invalid_redis = RuleRedis(hashes={
+            "module/a_b/metrics_alert_rules": {"c": "groups: [\n"},
+        })
+        self.provision(invalid_redis)
+        self.assertEqual(output_path.read_bytes(), previous)
+
+        rejected_runner = ProvisioningPromtool(
+            metrics_alert_rules.RuleValidationError("invalid rule file")
+        )
+        updated_redis = RuleRedis(hashes={
+            "module/a_b/metrics_alert_rules": {
+                "c": self.payload("RejectedUpdate"),
+            },
+        })
+        self.provision(updated_redis, runner=rejected_runner)
+        self.assertEqual(output_path.read_bytes(), previous)
+
+        colliding_identity = RuleRedis(hashes={
+            "module/a/metrics_alert_rules": {"b_c": "groups: [\n"},
+        })
+        self.provision(colliding_identity)
+        self.assertFalse(output_path.exists())
+
+    def test_replaces_a_valid_candidate_atomically(self):
+        redis_client = RuleRedis(hashes={
+            "module/app1/metrics_alert_rules": {
+                "availability": self.payload("InitialAlert"),
+            },
+        })
+        self.provision(redis_client)
+        output_path = self.generated_path("app1", "availability")
+        previous = output_path.read_bytes()
+        updated_redis = RuleRedis(hashes={
+            "module/app1/metrics_alert_rules": {
+                "availability": self.payload("UpdatedAlert"),
+            },
+        })
+        real_replace = os.replace
+        observations = []
+
+        def observe_replace(source, destination):
+            observations.append({
+                "destination_before": pathlib.Path(destination).read_bytes(),
+                "candidate": pathlib.Path(source).read_bytes(),
+            })
+            real_replace(source, destination)
+
+        with patch.object(
+            metrics_alert_rules.os, "replace", side_effect=observe_replace
+        ):
+            self.provision(updated_redis)
+
+        self.assertEqual(observations[0]["destination_before"], previous)
+        self.assertIn(b"UpdatedAlert", observations[0]["candidate"])
+        self.assertIn(b"UpdatedAlert", output_path.read_bytes())
+        self.assertNotEqual(output_path.read_bytes(), previous)
+
+    def test_valid_and_invalid_provider_updates_are_independent(self):
+        initial_redis = RuleRedis(hashes={
+            "module/app1/metrics_alert_rules": {
+                "first": self.payload("FirstAlert"),
+                "second": self.payload("SecondAlert"),
+            },
+        })
+        self.provision(initial_redis)
+        first_path = self.generated_path("app1", "first")
+        second_path = self.generated_path("app1", "second")
+        first_previous = first_path.read_bytes()
+
+        updated_redis = RuleRedis(hashes={
+            "module/app1/metrics_alert_rules": {
+                "first": "groups: [\n",
+                "second": self.payload("SecondAlertUpdated"),
+                "third": b"\xff",
+            },
+        })
+        self.provision(updated_redis)
+
+        self.assertEqual(first_path.read_bytes(), first_previous)
+        self.assertIn(b"SecondAlertUpdated", second_path.read_bytes())
+        self.assertFalse(self.generated_path("app1", "third").exists())
+
+    def test_cleanup_removes_only_stale_generated_module_rules(self):
+        built_in = self.rules_directory / "nodes.yml"
+        custom = self.rules_directory / "custom.yml"
+        built_in.write_bytes(b"built-in\n")
+        custom.write_bytes(b"legacy-custom\n")
+        redis_client = RuleRedis(hashes={
+            "module/app1/metrics_alert_rules": {
+                "availability": self.payload("Available"),
+            },
+        })
+        self.provision(redis_client)
+        generated = self.generated_path("app1", "availability")
+        self.assertTrue(generated.exists())
+        orphan = self.rules_directory / "provision_orphan_rule.yml"
+        orphan.write_bytes(b"unowned\n")
+
+        self.provision(RuleRedis())
+
+        self.assertFalse(generated.exists())
+        self.assertFalse(orphan.exists())
+        self.assertEqual(built_in.read_bytes(), b"built-in\n")
+        self.assertEqual(custom.read_bytes(), b"legacy-custom\n")
+
+    def test_propagates_redis_image_filesystem_and_container_failures(self):
+        with self.assertRaisesRegex(
+            metrics_alert_rules.RuleInfrastructureError,
+            "cannot discover.*Redis",
+        ):
+            self.provision(RuleRedis(scan_error=OSError("redis offline")))
+
+        unreadable_redis = RuleRedis(
+            hashes={
+                "module/app1/metrics_alert_rules": {
+                    "availability": self.payload("Available"),
+                },
+            },
+            hgetall_error=OSError("redis read failed"),
+        )
+        with self.assertRaisesRegex(
+            metrics_alert_rules.RuleInfrastructureError,
+            "cannot read module alert-rule hash",
+        ):
+            self.provision(unreadable_redis)
+
+        redis_client = RuleRedis(hashes={
+            "module/app1/metrics_alert_rules": {
+                "availability": self.payload("Available"),
+            },
+        })
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(
+                metrics_alert_rules.RuleInfrastructureError,
+                "PROMETHEUS_IMAGE is not set",
+            ):
+                metrics_alert_rules.provision_module_alert_rules(
+                    redis_client,
+                    rules_directory=self.rules_directory,
+                    warning=ignore_warning,
+                )
+
+        with patch.object(
+            metrics_alert_rules.tempfile,
+            "mkstemp",
+            side_effect=OSError("read-only filesystem"),
+        ):
+            with self.assertRaisesRegex(
+                metrics_alert_rules.RuleInfrastructureError,
+                "read-only filesystem",
+            ):
+                self.provision(redis_client)
+
+        failing_runner = ProvisioningPromtool(
+            metrics_alert_rules.RuleInfrastructureError(
+                "container unavailable"
+            )
+        )
+        with self.assertRaisesRegex(
+            metrics_alert_rules.RuleInfrastructureError,
+            "container unavailable",
+        ):
+            self.provision(redis_client, runner=failing_runner)
+
+    def test_warns_for_duplicate_installed_module_identities_only(self):
+        redis_client = RuleRedis(hashes={
+            "module/app1/metrics_alert_rules": {
+                "first": self.payload("SharedAlert"),
+                "second": self.payload("SharedAlert"),
+            },
+            "module/app2/metrics_alert_rules": {
+                "first": self.payload("SharedAlert"),
+            },
+        })
+
+        _runner, warnings = self.provision(redis_client)
+
+        duplicate_warnings = [
+            message for message in warnings
+            if "duplicate installed module alert identity" in message
+        ]
+        self.assertEqual(len(duplicate_warnings), 1)
+        self.assertIn("alertname='SharedAlert'", duplicate_warnings[0])
+        self.assertIn("module_id='app1'", duplicate_warnings[0])
+        self.assertNotIn("module_id='app2'", duplicate_warnings[0])
+
+
 class PromtoolRunnerTests(unittest.TestCase):
     def test_runs_pinned_image_networkless_without_a_shell(self):
         calls = []
@@ -714,6 +1142,36 @@ class PromtoolRunnerTests(unittest.TestCase):
             ):
                 metrics_alert_rules.PromtoolRunner()
 
+    def test_checks_candidate_through_a_read_only_networkless_mount(self):
+        calls = []
+
+        def executor(command, **kwargs):
+            calls.append(command)
+            return types.SimpleNamespace(returncode=0, stdout="SUCCESS\n")
+
+        runner = metrics_alert_rules.PromtoolRunner(
+            image="quay.io/prometheus/prometheus:v3.5.3",
+            executor=executor,
+        )
+        with tempfile.NamedTemporaryFile() as candidate:
+            output = runner.check_rules(candidate.name)
+            candidate_path = os.path.abspath(candidate.name)
+
+        self.assertEqual(output, "SUCCESS")
+        self.assertEqual(calls[0], [
+            "/usr/bin/podman",
+            "run",
+            "--rm",
+            "--network=none",
+            "--volume",
+            f"{candidate_path}:/tmp/ns8-module-rules.yml:ro,Z",
+            "--entrypoint=/bin/promtool",
+            "quay.io/prometheus/prometheus:v3.5.3",
+            "check",
+            "rules",
+            "/tmp/ns8-module-rules.yml",
+        ])
+
     def test_classifies_promtool_rejection_as_validation_failure(self):
         def executor(command, **kwargs):
             return types.SimpleNamespace(returncode=1, stdout="parse error")
@@ -725,16 +1183,42 @@ class PromtoolRunnerTests(unittest.TestCase):
         ):
             runner(["--experimental", "promql", "format", "up{"])
 
-    def test_classifies_runtime_exit_as_infrastructure_failure(self):
+    def test_classifies_podman_status_one_as_infrastructure_failure(self):
         def executor(command, **kwargs):
-            return types.SimpleNamespace(returncode=125, stdout="image missing")
+            return types.SimpleNamespace(
+                returncode=1,
+                stdout="Failed to obtain podman configuration: denied",
+            )
 
-        runner = metrics_alert_rules.PromtoolRunner("prometheus:v3.5.3", executor)
+        runner = metrics_alert_rules.PromtoolRunner(
+            "prometheus:v3.5.3", executor
+        )
 
         with self.assertRaisesRegex(
-            metrics_alert_rules.RuleInfrastructureError, "image missing"
+            metrics_alert_rules.RuleInfrastructureError,
+            "podman configuration",
         ):
             runner(["--version"])
+
+    def test_classifies_runtime_exit_as_infrastructure_failure(self):
+        for returncode, output in (
+            (125, "image missing"),
+            (137, "container killed"),
+        ):
+            with self.subTest(returncode=returncode):
+                def executor(command, **kwargs):
+                    return types.SimpleNamespace(
+                        returncode=returncode, stdout=output
+                    )
+
+                runner = metrics_alert_rules.PromtoolRunner(
+                    "prometheus:v3.5.3", executor
+                )
+
+                with self.assertRaisesRegex(
+                    metrics_alert_rules.RuleInfrastructureError, output
+                ):
+                    runner(["--version"])
 
     def test_classifies_process_start_failure_as_infrastructure_failure(self):
         def executor(command, **kwargs):
