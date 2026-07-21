@@ -84,7 +84,7 @@ class PromtoolRunner:
             "--rm",
             "--network=none",
             "--volume",
-            f"{candidate_path}:/tmp/ns8-module-rules.yml:ro,Z",
+            f"{candidate_path}:/tmp/ns8-module-rules.yml:ro,z",
             "--entrypoint=/bin/promtool",
             self.image,
             "check",

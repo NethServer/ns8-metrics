@@ -1142,7 +1142,7 @@ class PromtoolRunnerTests(unittest.TestCase):
             ):
                 metrics_alert_rules.PromtoolRunner()
 
-    def test_checks_candidate_through_a_read_only_networkless_mount(self):
+    def test_checks_candidate_through_a_shared_read_only_networkless_mount(self):
         calls = []
 
         def executor(command, **kwargs):
@@ -1164,7 +1164,7 @@ class PromtoolRunnerTests(unittest.TestCase):
             "--rm",
             "--network=none",
             "--volume",
-            f"{candidate_path}:/tmp/ns8-module-rules.yml:ro,Z",
+            f"{candidate_path}:/tmp/ns8-module-rules.yml:ro,z",
             "--entrypoint=/bin/promtool",
             "quay.io/prometheus/prometheus:v3.5.3",
             "check",
