@@ -444,11 +444,14 @@ def reload_prometheus_rules(
     if client is None:
         client = PrometheusClient()
 
-    _run_required(
+    provision_result = _run_required(
         ["provision-prometheus"],
         "Prometheus provisioning",
         executor,
     )
+    for line in (provision_result.stdout or "").splitlines():
+        if line:
+            warning(line)
     if not _service_is_active(executor):
         return "inactive"
 

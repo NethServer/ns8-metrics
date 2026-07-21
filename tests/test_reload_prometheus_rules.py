@@ -273,6 +273,24 @@ class ReloadCoordinatorTests(unittest.TestCase):
         self.assertEqual(client.reload_calls, 0)
         self.assertEqual(len(executor.calls), 2)
 
+    def test_successful_provisioning_warnings_are_forwarded(self):
+        executor = ScriptedExecutor(
+            command_result(
+                stdout="Skipped module alert rule\nWarning: missing metadata\n"
+            ),
+            command_result(3),
+        )
+
+        result, warnings, _clock = self.run_reload(
+            executor, ScriptedClient()
+        )
+
+        self.assertEqual(result, "inactive")
+        self.assertEqual(warnings, [
+            "Skipped module alert rule",
+            "Warning: missing metadata",
+        ])
+
     def test_missing_pre_reload_timestamp_uses_restart_fallback(self):
         executor = ScriptedExecutor(
             command_result(),
