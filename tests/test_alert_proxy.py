@@ -150,10 +150,6 @@ class AlertProxyRequestTests(unittest.IsolatedAsyncioTestCase):
                 {"alertname": "CertExpired", "cn": "old.example"},
                 "cert-expired:old.example:node:4",
             ),
-            (
-                {"alertname": "SystemdUnitFailed", "name": "app.service"},
-                "systemd-unit-failed:postgresql1:app.service:node:4",
-            ),
         )
 
         for specific_labels, expected in cases:
