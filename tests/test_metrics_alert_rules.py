@@ -1200,6 +1200,26 @@ class PromtoolRunnerTests(unittest.TestCase):
         ):
             runner(["--version"])
 
+    def test_classifies_candidate_read_failure_as_infrastructure_failure(self):
+        def executor(command, **kwargs):
+            return types.SimpleNamespace(
+                returncode=1,
+                stdout=(
+                    "FAILED: open /tmp/ns8-module-rules.yml: "
+                    "permission denied"
+                ),
+            )
+
+        runner = metrics_alert_rules.PromtoolRunner(
+            "prometheus:v3.5.3", executor
+        )
+
+        with self.assertRaisesRegex(
+            metrics_alert_rules.RuleInfrastructureError,
+            "permission denied",
+        ):
+            runner.check_rules("candidate.yml")
+
     def test_classifies_runtime_exit_as_infrastructure_failure(self):
         for returncode, output in (
             (125, "image missing"),

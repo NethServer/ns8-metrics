@@ -29,6 +29,7 @@ PLACEHOLDER_VALUE = "1"
 OWNERSHIP_PREFIX = "# ns8-metrics-source: "
 GENERATED_RULE_PREFIX = "provision_"
 GENERATED_RULE_SUFFIX = ".yml"
+PROMTOOL_RULE_PATH = "/tmp/ns8-module-rules.yml"
 
 
 class RuleValidationError(ValueError):
@@ -84,12 +85,12 @@ class PromtoolRunner:
             "--rm",
             "--network=none",
             "--volume",
-            f"{candidate_path}:/tmp/ns8-module-rules.yml:ro,z",
+            f"{candidate_path}:{PROMTOOL_RULE_PATH}:ro,z",
             "--entrypoint=/bin/promtool",
             self.image,
             "check",
             "rules",
-            "/tmp/ns8-module-rules.yml",
+            PROMTOOL_RULE_PATH,
         ]
         return self._execute(command)
 
@@ -113,7 +114,7 @@ class PromtoolRunner:
             result.returncode in {125, 126, 127}
             or result.returncode < 0
             or result.returncode >= 128
-            or _is_podman_runtime_error(output)
+            or _is_tooling_infrastructure_error(output)
         ):
             detail = output or f"podman exited with status {result.returncode}"
             raise RuleInfrastructureError(detail)
@@ -123,17 +124,28 @@ class PromtoolRunner:
         return output
 
 
-def _is_podman_runtime_error(output):
+def _is_tooling_infrastructure_error(output):
     runtime_prefixes = (
         "Error:",
         "Failed to obtain podman configuration:",
         "cannot clone:",
+    )
+    candidate_read_errors = (
+        "input/output error",
+        "no such file or directory",
+        "operation not permitted",
+        "permission denied",
     )
     for line in output.splitlines():
         stripped = line.strip()
         if stripped.startswith(runtime_prefixes):
             return True
         if stripped.startswith("time=") and " level=error " in stripped:
+            return True
+        if (
+            PROMTOOL_RULE_PATH in stripped
+            and any(error in stripped.lower() for error in candidate_read_errors)
+        ):
             return True
     return False
 
