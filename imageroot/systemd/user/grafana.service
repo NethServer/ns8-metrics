@@ -7,8 +7,8 @@ Description=Grafana server
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
-EnvironmentFile=%S/state/environment
-WorkingDirectory=%S/state
+EnvironmentFile=%E/state/environment
+WorkingDirectory=%E/state
 Restart=always
 ExecStartPre=/bin/rm -f %t/grafana.pid %t/grafana.ctr-id
 ExecStartPre=runagent provision-grafana
@@ -20,10 +20,10 @@ ExecStart=/usr/bin/podman run \
     --replace --name=%N \
     --network=host \
     --volume=grafana-data:/var/lib/grafana:z \
-    --volume=%S/state/datasources/:/etc/grafana/provisioning/datasources:z \
-    --volume=%S/etc/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:z \
-    --volume=%S/state/dashboards/:/etc/grafana/dashboards:z \
-    --volume=%S/etc/grafana.ini:/etc/grafana/grafana.ini:z \
+    --volume=%E/state/datasources/:/etc/grafana/provisioning/datasources:z \
+    --volume=%E/etc/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:z \
+    --volume=%E/state/dashboards/:/etc/grafana/dashboards:z \
+    --volume=%E/etc/grafana.ini:/etc/grafana/grafana.ini:z \
     -e GF_SERVER_SERVE_FROM_SUB_PATH=true \
     -e GF_SERVER_ROOT_URL=/${GRAFANA_PATH} \
     -e GF_SERVER_ADDR=127.0.0.1 \

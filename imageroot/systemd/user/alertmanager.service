@@ -8,8 +8,8 @@ After=prometheus.service
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
-EnvironmentFile=%S/state/environment
-WorkingDirectory=%S/state
+EnvironmentFile=%E/state/environment
+WorkingDirectory=%E/state
 Restart=always
 ExecStartPre=/bin/rm -f %t/alertmanager.pid %t/alertmanager.ctr-id
 ExecStart=/usr/bin/podman run \
@@ -19,8 +19,8 @@ ExecStart=/usr/bin/podman run \
     --cgroups=no-conmon \
     --replace --name=%N \
     --network=host \
-    --volume=%S/state/alertmanager.yml:/alertmanager.yml:z \
-    --volume=%S/state/templates.d/:/etc/alertmanager/templates:z \
+    --volume=%E/state/alertmanager.yml:/alertmanager.yml:z \
+    --volume=%E/state/templates.d/:/etc/alertmanager/templates:z \
     --volume=alertmanager-data:/alertmanager:z \
     ${ALERTMANAGER_IMAGE} --config.file=/alertmanager.yml --web.listen-address=127.0.0.1:9093 --cluster.listen-address=127.0.0.1:9094
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/alertmanager.ctr-id -t 10

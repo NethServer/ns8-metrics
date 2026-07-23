@@ -7,8 +7,8 @@ Description=Prometheus server
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
-EnvironmentFile=%S/state/environment
-WorkingDirectory=%S/state
+EnvironmentFile=%E/state/environment
+WorkingDirectory=%E/state
 Restart=always
 ExecStartPre=/bin/rm -f %t/prometheus.pid %t/prometheus.ctr-id
 ExecStartPre=/usr/local/bin/runagent provision-prometheus
@@ -20,7 +20,7 @@ ExecStart=/usr/bin/podman run \
     --cgroups=no-conmon \
     --replace --name=%N \
     --network=host \
-    --volume=%S/state/prometheus.yml:/prometheus/prometheus.yml:z \
+    --volume=%E/state/prometheus.yml:/prometheus/prometheus.yml:z \
     --volume=./prometheus.d/:/prometheus/prometheus.d/:z \
     --volume=./rules.d/:/prometheus/rules.d/:z \
     --volume=prometheus-data:/prometheus:z \
