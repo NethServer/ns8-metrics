@@ -8,9 +8,9 @@ After=prometheus.service
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
-EnvironmentFile=%S/state/environment
-EnvironmentFile=%S/state/alert-proxy.env
-WorkingDirectory=%S/state
+EnvironmentFile=%E/state/environment
+EnvironmentFile=%E/state/alert-proxy.env
+WorkingDirectory=%E/state
 Restart=always
 ExecStartPre=/bin/rm -f %t/alert-proxy.pid %t/alert-proxy.ctr-id
 ExecStart=/usr/bin/podman run \
@@ -20,8 +20,8 @@ ExecStart=/usr/bin/podman run \
     --cgroups=no-conmon \
     --replace --name=%N \
     --network=host \
-    --env-file=%S/state/environment \
-    --env-file=%S/state/alert-proxy.env \
+    --env-file=%E/state/environment \
+    --env-file=%E/state/alert-proxy.env \
     ${ALERT_PROXY_IMAGE}
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/alert-proxy.ctr-id -t 10
 ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/alert-proxy.ctr-id
