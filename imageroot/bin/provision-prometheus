@@ -5,17 +5,20 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-import os
-import yaml
-import agent
 import json
+import os
 import sys
+from collections.abc import Mapping
+
+import agent
+import yaml
 
 ALERT_MANAGER_DEFAULT_CONFIG = {
     'global': {},
     'route': {
         'receiver': 'default-receiver',
-        'group_by': ['alertname', 'node'],
+        # Keep same-name alerts from different providers in separate groups.
+        'group_by': ['alertname', 'node', 'module_id'],
         'group_wait': '30s',
         'group_interval': '5m',
         'repeat_interval': '3h',
@@ -31,7 +34,8 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
         {
         'source_matchers': ['severity="critical"'],
         'target_matchers': ['severity="warning"'],
-        'equal': ['alertname']
+        # A critical alert must inhibit warnings only for the same provider.
+        'equal': ['alertname', 'module_id']
         }
     ],
     'receivers': [
@@ -78,23 +82,77 @@ def validate_and_generate_provider_configs(redis_client):
             file.write(f"    target_type: node\n")
             file.write(f"    node: {node_id}\n")
 
-    def _decorate_with_target_type_label(data, target_type):
-        for oitem in data:
-            oitem['labels']['target_type'] = target_type
-
     for module in redis_client.scan_iter("module/*/metrics_targets"):
         module_id = module.split('/')[1]
         targets = redis_client.hgetall(module)
         for db_key, db_val in targets.items():
+            # Isolate malformed fields so valid targets from the same provider
+            # can still be materialized.
             try:
                 data = yaml.safe_load(db_val)
-                _decorate_with_target_type_label(data, db_key)
-            except Exception as ex:
+                data = normalize_provider_targets(
+                    data,
+                    redis_key=module,
+                    target_type=db_key,
+                    module_id=module_id,
+                )
+            except (TypeError, ValueError, yaml.YAMLError) as ex:
                 print(f"Skipped target {db_key} for module {module_id}: {ex}", file=sys.stderr)
                 continue
             filename = f"prometheus.d/provision_{module_id}_{db_key}.yml"
-            with open(filename, 'w') as fp:
+            with open(filename, 'w', encoding='utf-8') as fp:
                  yaml.safe_dump(data, fp, sort_keys=False)
+
+def normalize_provider_targets(
+    data, redis_key, target_type, module_id, warning_stream=None
+):
+    """Validate targets and enforce their Redis-derived identity labels."""
+
+    # A Redis field represents one Prometheus file_sd document. Reject the
+    # complete field if its top-level shape cannot contain target entries.
+    if not isinstance(data, list):
+        raise ValueError("target document must be a list of mappings")
+
+    # Allow callers and tests to capture warnings without redirecting stderr.
+    if warning_stream is None:
+        warning_stream = sys.stderr
+
+    normalized_targets = []
+    # The Redis key and field identify the provider and target type. Payload
+    # labels cannot override that authoritative ownership.
+    authoritative_labels = {
+        'module_id': module_id,
+        'target_type': target_type,
+    }
+    for index, target in enumerate(data):
+        # Every file_sd target entry must be a mapping. Rejecting the field here
+        # avoids writing a partially valid provider configuration.
+        if not isinstance(target, Mapping):
+            raise ValueError(f"target item {index} must be a mapping")
+
+        # Copy provider-owned mappings before normalization so validation does
+        # not mutate the object returned by the YAML decoder.
+        normalized_target = dict(target)
+        labels = normalized_target.get('labels', {})
+        if not isinstance(labels, Mapping):
+            raise ValueError(f"target item {index} labels must be a mapping")
+
+        labels = dict(labels)
+        for label_name, effective_value in authoritative_labels.items():
+            # Report spoofed or stale identity before replacing it with the
+            # value derived from the Redis key and field.
+            if label_name in labels and labels[label_name] != effective_value:
+                print(
+                    f"Target label conflict at Redis key {redis_key}, "
+                    f"field {target_type}, item {index}: {label_name}="
+                    f"{labels[label_name]!r} overwritten with {effective_value!r}",
+                    file=warning_stream,
+                )
+            labels[label_name] = effective_value
+        normalized_target['labels'] = labels
+        normalized_targets.append(normalized_target)
+
+    return normalized_targets
 
 def clean_up_old_provider_configs(redis_client):
     nodes = []
@@ -203,20 +261,25 @@ def generate_custom_alertmanager_templates(redis_client):
             if template:
                 f.write(template)
 
-# connect to client and fetch providers for prometheus
-redis_client = agent.redis_connect(use_replica=True)
+def main():
+    # connect to client and fetch providers for prometheus
+    redis_client = agent.redis_connect(use_replica=True)
 
-# This script can run before create-module, as event
-# handler. Ensure required dir exists:
-os.makedirs("prometheus.d", exist_ok=True)
+    # This script can run before create-module, as event
+    # handler. Ensure required dir exists:
+    os.makedirs("prometheus.d", exist_ok=True)
 
-# Generate providers configuration
-clean_up_old_provisioned_targets(redis_client)
-generate_prometheus_config(redis_client)
-validate_and_generate_provider_configs(redis_client)
-clean_up_old_provider_configs(redis_client)
+    # Generate providers configuration
+    clean_up_old_provisioned_targets(redis_client)
+    generate_prometheus_config(redis_client)
+    validate_and_generate_provider_configs(redis_client)
+    clean_up_old_provider_configs(redis_client)
 
-# Generate alertmanager configuration
-generate_alertmanagr_config(redis_client)
-generate_custom_alertmanager_rules(redis_client)
-generate_custom_alertmanager_templates(redis_client)
+    # Generate alertmanager configuration
+    generate_alertmanagr_config(redis_client)
+    generate_custom_alertmanager_rules(redis_client)
+    generate_custom_alertmanager_templates(redis_client)
+
+# Keep helper functions importable without connecting to Redis during tests.
+if __name__ == '__main__':
+    main()
