@@ -200,26 +200,83 @@ When a module wants to add a new target, it must use the `metrics-target-changed
 
 #### metrics-target-changed event
 
-The `provision-prometheus` script will search for the following key: `module/<module_id>/metrics_targets`.
-The key is an hash containing the following fields:
-- key `<name>`, a name for the target
-- value `<yaml_config>`, the YAML configuration for the target
+The `provision-prometheus` script searches for targets in:
 
-Example of a target configuration for the `postgresql1` module in JSON format:
-```
-cat target.yaml | redis-cli -x hset module/postgresql1/metrics_targets postgres
+```text
+module/<publisher_id>/metrics_targets
 ```
 
-Content of the `target.yaml` file:
+The Redis hash contains:
+
+- field `<target_type>`, a stable name identifying the target type;
+- value `<yaml_config>`, a Prometheus `file_sd_config` YAML list.
+
+The publisher ID from the Redis key is authoritative. For every target,
+provisioning:
+
+- creates the `labels` mapping when it is absent;
+- sets `module_id` to `<publisher_id>`;
+- sets `target_type` to the Redis field name;
+- preserves every other label.
+
+Provider-supplied `module_id` and `target_type` values cannot override this
+identity. Conflicting values are replaced and reported with their Redis key,
+field, and item position.
+
+Each Redis field is validated independently. A malformed field is skipped
+without preventing valid fields from the same or other publishers from being
+materialized.
+
+For example, publish a PostgreSQL target with:
+
+```sh
+redis-cli -x hset \
+  module/postgresql1/metrics_targets \
+  postgres < target.yml
+```
+
+Content of `target.yml`:
+
 ```yaml
 - targets:
   - 10.5.4.1:9187
   labels:
-    module_id: postresql1
+    node: "1"
 ```
 
-The configuration will be saved on a YAML file inside the `prometheus.d` directory, named like `provision_<module_id>_<name>.json`.
+Provisioning adds the authoritative labels:
 
+```yaml
+- targets:
+  - 10.5.4.1:9187
+  labels:
+    node: "1"
+    module_id: postgresql1
+    target_type: postgres
+```
+
+The generated configuration is saved as:
+
+```text
+prometheus.d/provision_<publisher_id>_<target_type>.yml
+```
+
+After adding, updating, or removing a target, the publisher must emit the
+`metrics-target-changed` event.
+
+#### Provider alert identity
+
+Alerts carrying `module_id` are grouped by Alertmanager using `alertname`,
+`node`, and `module_id`. This keeps same-name alerts from different module
+instances in separate notification groups.
+
+Critical alerts inhibit warning alerts only when both `alertname` and
+`module_id` match. Alerts without `module_id`, such as alerts generated from
+cluster-node targets, retain their previous grouping and inhibition behavior.
+
+Downstream identifiers are also scoped by a non-empty `module_id`, preventing
+a resolved alert from one module instance from clearing a same-name alert that
+is still firing for another instance.
 
 ### Provisioning Grafana
 
