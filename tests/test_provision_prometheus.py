@@ -1,0 +1,419 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import fnmatch
+import importlib.machinery
+import importlib.util
+import io
+import os
+import pathlib
+import sys
+import tempfile
+import types
+import unittest
+import warnings
+from contextlib import contextmanager, redirect_stderr
+from unittest.mock import patch
+
+import yaml
+
+
+@contextmanager
+def working_directory(path):
+    previous_directory = os.getcwd()
+    os.chdir(path)
+    try:
+        yield
+    finally:
+        os.chdir(previous_directory)
+
+
+def load_provision_prometheus():
+    agent_module = types.ModuleType('agent')
+    agent_module.get_hostname = lambda: 'node.example.org'
+    agent_module.get_smarthost_settings = lambda redis_client: {'enabled': False}
+    agent_module.redis_connect = lambda use_replica, decode_responses=True: None
+    sys.modules['agent'] = agent_module
+
+    bin_directory = (
+        pathlib.Path(__file__).resolve().parents[1] / 'imageroot' / 'bin'
+    )
+    script_path = bin_directory / 'provision-prometheus'
+    loader = importlib.machinery.SourceFileLoader(
+        'provision_prometheus', str(script_path)
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(bin_directory))
+    try:
+        loader.exec_module(module)
+    finally:
+        sys.path.remove(str(bin_directory))
+    return module
+
+
+provision_prometheus = load_provision_prometheus()
+
+
+class FakeRedis:
+    def __init__(self, hashes=None, sets=None, decode_responses=True):
+        self.hashes = hashes or {}
+        self.sets = sets or {}
+        self.decode_responses = decode_responses
+
+    def response(self, value):
+        if isinstance(value, str):
+            value = value.encode('utf-8')
+        if isinstance(value, bytes) and self.decode_responses:
+            return value.decode('utf-8')
+        return value
+
+    def exists(self, key):
+        return self.key_bytes(key) in {
+            self.key_bytes(candidate) for candidate in self.hashes
+        }
+
+    @staticmethod
+    def key_bytes(key):
+        return key.encode('utf-8') if isinstance(key, str) else key
+
+    def hgetall(self, key):
+        fields = next((
+            fields for candidate, fields in self.hashes.items()
+            if self.key_bytes(candidate) == self.key_bytes(key)
+        ), {})
+        return {
+            self.response(field): self.response(value)
+            for field, value in fields.items()
+        }
+
+    def hvals(self, key):
+        return list(self.hgetall(key).values())
+
+    def scan_iter(self, pattern):
+        keys = sorted({
+            self.key_bytes(key) for key in set(self.hashes) | set(self.sets)
+        })
+        return (
+            self.response(key) for key in keys
+            if fnmatch.fnmatch(key, self.key_bytes(pattern))
+        )
+
+    def sismember(self, key, value):
+        return value in self.sets.get(key, set())
+
+
+class ProviderTargetTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_directory.cleanup)
+        self.work_directory = pathlib.Path(self.temp_directory.name)
+        (self.work_directory / 'prometheus.d').mkdir()
+
+    def generate_targets(self, redis_client):
+        with working_directory(self.work_directory):
+            provision_prometheus.validate_and_generate_provider_configs(redis_client)
+
+    def read_yaml(self, relative_path):
+        with open(self.work_directory / relative_path, encoding='utf-8') as stream:
+            return yaml.safe_load(stream)
+
+    def test_conflicting_target_type_is_overwritten_and_warned(self):
+        redis_key = 'module/postgresql1/metrics_targets'
+        redis_client = FakeRedis(hashes={
+            redis_key: {
+                'postgres': '''
+- targets: ["127.0.0.1:9187"]
+  labels:
+    module_id: postgresql1
+    target_type: database
+''',
+            },
+        })
+        warnings = io.StringIO()
+
+        with redirect_stderr(warnings):
+            self.generate_targets(redis_client)
+
+        targets = self.read_yaml('prometheus.d/provision_postgresql1_postgres.yml')
+        self.assertEqual(targets[0]['labels']['target_type'], 'postgres')
+        warning_text = warnings.getvalue()
+        self.assertIn(redis_key, warning_text)
+        self.assertIn('field postgres, item 0', warning_text)
+        self.assertIn("target_type='database' overwritten with 'postgres'", warning_text)
+
+    def test_non_string_target_names_do_not_block_valid_fields(self):
+        # Redis-backed Robot fixtures cover string names; retain Python types here.
+        invalid_names = (None, 123)
+        redis_key = 'module/postgresql1/metrics_targets'
+        for index, invalid_name in enumerate(invalid_names):
+            with self.subTest(name=invalid_name):
+                valid_name = f'valid{index}'
+                redis_client = FakeRedis(hashes={
+                    redis_key: {
+                        invalid_name: '- targets: ["127.0.0.1:9187"]\n',
+                        valid_name: '- targets: ["127.0.0.1:9188"]\n',
+                    },
+                })
+                warnings = io.StringIO()
+
+                with redirect_stderr(warnings):
+                    self.generate_targets(redis_client)
+
+                target = self.read_yaml(
+                    f'prometheus.d/provision_postgresql1_{valid_name}.yml'
+                )
+                self.assertEqual(target[0]['targets'], ['127.0.0.1:9188'])
+                self.assertIn(redis_key, warnings.getvalue())
+                self.assertIn(f'invalid target type {invalid_name!r}', warnings.getvalue())
+                self.assertEqual(
+                    len(list((self.work_directory / 'prometheus.d').iterdir())),
+                    index + 1,
+                )
+        self.assertEqual(
+            list(self.work_directory.iterdir()),
+            [self.work_directory / 'prometheus.d'],
+        )
+
+    def test_target_filesystem_failures_still_propagate(self):
+        redis_client = FakeRedis(hashes={
+            'module/postgresql1/metrics_targets': {
+                'postgres': '- targets: ["127.0.0.1:9187"]\n',
+            },
+        })
+        with patch('builtins.open', side_effect=PermissionError('read-only target directory')):
+            with self.assertRaisesRegex(PermissionError, 'read-only target directory'):
+                self.generate_targets(redis_client)
+
+    def test_target_redis_failures_still_propagate(self):
+        for operation in ('scan_iter', 'hgetall'):
+            with self.subTest(operation=operation):
+                redis_client = FakeRedis(hashes={
+                    'module/app1/metrics_targets': {'valid': '- targets: []'},
+                })
+                with patch.object(
+                    redis_client, operation,
+                    side_effect=ConnectionError('Redis unavailable'),
+                ):
+                    with self.assertRaisesRegex(ConnectionError, 'Redis unavailable'):
+                        self.generate_targets(redis_client)
+
+
+class ProvisioningIntegrationTests(unittest.TestCase):
+    def test_main_preserves_module_rules_across_subscription_changes(self):
+        hashes = {
+            'module/app1/metrics_alert_rules': {
+                'valid': 'alert: ProviderAlert\nexpr: up == 0\n',
+            },
+        }
+        local_alertmanager = {
+            'static_configs': [{'targets': ['localhost:9093']}],
+        }
+        enterprise = {
+            'provider': 'nsent',
+            'collect_url': 'https://mimir.example.org/portal/collect/api/systems',
+            'system_id': 'test-system',
+            'auth_token': 'test-token',
+        }
+        mimir_alertmanager = {
+            'scheme': 'https',
+            'path_prefix': '/portal/collect/api/services/mimir/alertmanager',
+            'basic_auth': {'username': 'test-system', 'password': 'test-token'},
+            'static_configs': [{'targets': ['mimir.example.org:443']}],
+        }
+        cases = (
+            ('unsubscribed', {}, [local_alertmanager]),
+            ('enterprise', enterprise, [local_alertmanager, mimir_alertmanager]),
+            ('community', {'provider': 'nscom'}, [local_alertmanager]),
+            ('removed', {}, [local_alertmanager]),
+        )
+        warning_output = io.StringIO()
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            working_directory(directory),
+            patch.dict(os.environ, {'MODULE_ID': 'metrics1'}),
+            patch.object(
+                provision_prometheus.agent, 'redis_connect',
+                side_effect=lambda use_replica, decode_responses=True: FakeRedis(
+                    hashes=hashes, decode_responses=decode_responses,
+                ),
+            ),
+            patch.object(
+                provision_prometheus.metrics_alert_rules, 'PromtoolRunner',
+            ) as runner,
+            patch.object(
+                provision_prometheus.metrics_alert_rules,
+                'rewrite_promql_expression',
+                return_value='up{module_id="app1"} == 0',
+            ),
+            redirect_stderr(warning_output),
+        ):
+            previous_rule = None
+            for name, subscription, alertmanagers in cases:
+                with self.subTest(subscription=name):
+                    if subscription:
+                        hashes['cluster/subscription'] = subscription
+                    else:
+                        hashes.pop('cluster/subscription', None)
+                    provision_prometheus.main()
+
+                    config = yaml.safe_load(pathlib.Path('prometheus.yml').read_text())
+                    self.assertEqual(config['alerting']['alertmanagers'], alertmanagers)
+                    self.assertEqual(config['rule_files'], ['/prometheus/rules.d/*.yml'])
+                    rule_path = pathlib.Path('rules.d/provision_app1_valid.yml')
+                    rule_text = rule_path.read_text()
+                    group = yaml.safe_load(rule_text)['groups'][0]
+                    self.assertEqual(group['name'], 'ns8:app1:valid')
+                    self.assertEqual(group['rules'][0]['alert'], 'ProviderAlert')
+                    self.assertEqual(group['rules'][0]['labels']['module_id'], 'app1')
+                    self.assertEqual(group['rules'][0]['expr'], 'up{module_id="app1"} == 0')
+                    if previous_rule is not None:
+                        self.assertEqual(rule_text, previous_rule)
+                    previous_rule = rule_text
+                    runner.return_value.check_rules.assert_called()
+                    runner.reset_mock()
+
+                    local_config = yaml.safe_load(pathlib.Path('alertmanager.yml').read_text())
+                    self.assertEqual(local_config['receivers'], [{'name': 'default-receiver'}])
+        self.assertNotIn(enterprise['auth_token'], warning_output.getvalue())
+
+    def test_main_isolates_invalid_target_bytes(self):
+        payload = '- targets: ["127.0.0.1:9187"]\n'
+        cases = (
+            ('key', {b'module/bad\xff/metrics_targets': {'invalid': payload}},
+             "b'module/bad\\xff/metrics_targets'", 'Redis key is not valid UTF-8'),
+            ('field', {'module/app1/metrics_targets': {b'bad\xff': payload}},
+             "b'bad\\xff'", 'target type is not valid UTF-8'),
+            ('value', {'module/app1/metrics_targets': {'invalid': b'\xff'}},
+             "'invalid'", 'target payload is not valid UTF-8'),
+        )
+        for location, invalid_hashes, source, diagnostic in cases:
+            with self.subTest(location=location):
+                hashes = {
+                    'node/1/vpn': {'ip_address': '10.5.4.1'},
+                    'module/metrics1/custom_alerts': {
+                        'local': 'alert: LocalAlert\nexpr: up == 0\n',
+                    },
+                    'module/app1/metrics_alert_rules': {
+                        'valid': 'alert: ProviderAlert\nexpr: up == 0\n',
+                    },
+                    **invalid_hashes,
+                }
+                for publisher in ('app1', 'app2'):
+                    hashes.setdefault(f'module/{publisher}/metrics_targets', {})[
+                        'valid'
+                    ] = payload
+                warning_output = io.StringIO()
+                with tempfile.TemporaryDirectory() as directory:
+                    with (
+                        working_directory(directory),
+                        patch.dict(os.environ, {'MODULE_ID': 'metrics1'}),
+                        patch.object(
+                            provision_prometheus.agent, 'redis_connect',
+                            side_effect=lambda use_replica, decode_responses=True: FakeRedis(
+                                hashes=hashes, decode_responses=decode_responses,
+                            ),
+                        ),
+                        patch.object(
+                            provision_prometheus.metrics_alert_rules, 'PromtoolRunner',
+                        ),
+                        patch.object(
+                            provision_prometheus.metrics_alert_rules,
+                            'rewrite_promql_expression',
+                            return_value='up{module_id="app1"} == 0',
+                        ),
+                        redirect_stderr(warning_output),
+                        warnings.catch_warnings(),
+                    ):
+                        warnings.simplefilter('ignore', ResourceWarning)
+                        provision_prometheus.main()
+                        self.assertEqual(
+                            {path.name for path in pathlib.Path('prometheus.d').iterdir()},
+                            {'node_1.yml', 'provision_app1_valid.yml',
+                             'provision_app2_valid.yml'},
+                        )
+                        for publisher in ('app1', 'app2'):
+                            target = yaml.safe_load(pathlib.Path(
+                                f'prometheus.d/provision_{publisher}_valid.yml'
+                            ).read_text())
+                            self.assertEqual(target[0]['labels'], {
+                                'module_id': publisher, 'target_type': 'valid',
+                            })
+                        node = yaml.safe_load(pathlib.Path('prometheus.d/node_1.yml').read_text())
+                        self.assertEqual(node[0]['labels'], {'node': 1, 'target_type': 'node'})
+                        self.assertTrue(pathlib.Path('rules.d/provision_app1_valid.yml').is_file())
+                        local = yaml.safe_load(pathlib.Path('rules.d/custom.yml').read_text())
+                        self.assertEqual(local['groups'][0]['rules'][0]['alert'], 'LocalAlert')
+                self.assertIn(source, warning_output.getvalue())
+                self.assertIn(diagnostic, warning_output.getvalue())
+
+    def test_main_isolates_invalid_utf8_and_keeps_custom_rules(self):
+        hashes = {
+            'module/metrics1/custom_alerts': {
+                'local': 'alert: LocalAlert\nexpr: up == 0\n',
+            },
+            'module/app1/metrics_alert_rules': {
+                'invalid': b'alert: InvalidAlert\nexpr: up == 0\n# \xff\n',
+                'valid': 'alert: ProviderAlert\nexpr: up == 0\n',
+            },
+        }
+        warning_output = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as temp_directory:
+            with working_directory(temp_directory):
+                with (
+                    patch.dict(os.environ, {'MODULE_ID': 'metrics1'}),
+                    patch.object(
+                        provision_prometheus.agent,
+                        'redis_connect',
+                        side_effect=lambda use_replica, decode_responses=True: FakeRedis(
+                            hashes=hashes, decode_responses=decode_responses,
+                        ),
+                    ),
+                    patch.object(
+                        provision_prometheus.metrics_alert_rules,
+                        'PromtoolRunner',
+                    ),
+                    patch.object(
+                        provision_prometheus.metrics_alert_rules,
+                        'rewrite_promql_expression',
+                        return_value='up{module_id="app1"} == 0',
+                    ),
+                    redirect_stderr(warning_output),
+                ):
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('ignore', ResourceWarning)
+                        provision_prometheus.main()
+
+                self.assertTrue(pathlib.Path('prometheus.d').is_dir())
+                self.assertTrue(pathlib.Path('rules.d').is_dir())
+                self.assertTrue(pathlib.Path('rules.d/custom.yml').is_file())
+                self.assertFalse(pathlib.Path('rules.d/provision_app1_invalid.yml').exists())
+                with open('rules.d/provision_app1_valid.yml', encoding='utf-8') as stream:
+                    provider_rules = yaml.safe_load(stream)
+
+                with open('rules.d/custom.yml', encoding='utf-8') as stream:
+                    custom_rules = yaml.safe_load(stream)
+
+        self.assertIn('payload is not valid UTF-8', warning_output.getvalue())
+        self.assertEqual(
+            provider_rules['groups'][0]['rules'][0]['alert'],
+            'ProviderAlert',
+        )
+        self.assertEqual(
+            provider_rules['groups'][0]['rules'][0]['labels']['module_id'],
+            'app1',
+        )
+        self.assertEqual(custom_rules['groups'][0]['name'], 'Custom')
+        self.assertEqual(
+            custom_rules['groups'][0]['rules'][0]['alert'],
+            'LocalAlert',
+        )
+
+
+if __name__ == '__main__':
+    unittest.main()
