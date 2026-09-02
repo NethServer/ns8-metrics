@@ -3,10 +3,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
+from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import yaml
@@ -22,6 +26,10 @@ REQUIRED_ANNOTATIONS = {
 }
 PLACEHOLDER_LABEL_BASE = "__ns8_rule_scope"
 PLACEHOLDER_VALUE = "1"
+OWNERSHIP_PREFIX = "# ns8-metrics-source: "
+GENERATED_RULE_PREFIX = "provision_"
+GENERATED_RULE_SUFFIX = ".yml"
+PROMTOOL_RULE_PATH = "/tmp/ns8-module-rules.yml"
 
 
 class RuleValidationError(ValueError):
@@ -67,6 +75,26 @@ class PromtoolRunner:
             self.image,
             *arguments,
         ]
+        return self._execute(command)
+
+    def check_rules(self, candidate_path):
+        candidate_path = os.path.abspath(os.fspath(candidate_path))
+        command = [
+            "/usr/bin/podman",
+            "run",
+            "--rm",
+            "--network=none",
+            "--volume",
+            f"{candidate_path}:{PROMTOOL_RULE_PATH}:ro,z",
+            "--entrypoint=/bin/promtool",
+            self.image,
+            "check",
+            "rules",
+            PROMTOOL_RULE_PATH,
+        ]
+        return self._execute(command)
+
+    def _execute(self, command):
         try:
             result = self.executor(
                 command,
@@ -82,7 +110,12 @@ class PromtoolRunner:
             ) from ex
 
         output = result.stdout.strip()
-        if result.returncode in {125, 126, 127} or result.returncode < 0:
+        if (
+            result.returncode in {125, 126, 127}
+            or result.returncode < 0
+            or result.returncode >= 128
+            or _is_tooling_infrastructure_error(output)
+        ):
             detail = output or f"podman exited with status {result.returncode}"
             raise RuleInfrastructureError(detail)
         if result.returncode != 0:
@@ -91,10 +124,46 @@ class PromtoolRunner:
         return output
 
 
+def _is_tooling_infrastructure_error(output):
+    runtime_prefixes = (
+        "Error:",
+        "Failed to obtain podman configuration:",
+        "cannot clone:",
+    )
+    candidate_read_errors = (
+        "input/output error",
+        "no such file or directory",
+        "operation not permitted",
+        "permission denied",
+    )
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(runtime_prefixes):
+            return True
+        if stripped.startswith("time=") and " level=error " in stripped:
+            return True
+        if (
+            PROMTOOL_RULE_PATH in stripped
+            and any(error in stripped.lower() for error in candidate_read_errors)
+        ):
+            return True
+    return False
+
+
 def generated_rule_filename(module_id, rule_set_name):
+    return generated_provider_filename(
+        module_id, rule_set_name,
+        field_label="rule-set name", filename_label="rule",
+    )
+
+
+def generated_provider_filename(
+    module_id, field_name, *, field_label, filename_label
+):
+    """Validate Redis-derived components before forming a provider filename."""
     for label, value in (
         ("module ID", module_id),
-        ("rule-set name", rule_set_name),
+        (field_label, field_name),
     ):
         if (
             not isinstance(value, str)
@@ -107,9 +176,11 @@ def generated_rule_filename(module_id, rule_set_name):
                 "'.', '_', and '-'"
             )
 
-    filename = f"provision_{module_id}_{rule_set_name}.yml"
+    filename = f"provision_{module_id}_{field_name}.yml"
     if len(os.fsencode(filename)) > 255:
-        raise RuleValidationError("generated rule filename exceeds 255 bytes")
+        raise RuleValidationError(
+            f"generated {filename_label} filename exceeds 255 bytes"
+        )
     return filename
 
 
@@ -392,3 +463,309 @@ def transform_alert_rule(source, promtool_runner=None, warning=None):
         return document
     except RuleValidationError as ex:
         raise RuleValidationError(f"{source.context}: {ex}") from ex
+
+
+def _redis_sort_key(value):
+    if isinstance(value, bytes):
+        return (0, value)
+    if isinstance(value, str):
+        return (1, value.encode("utf-8"))
+    return (2, repr(value).encode("utf-8", errors="backslashreplace"))
+
+
+def _decode_redis_identifier(value, label):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeError as ex:
+            raise RuleValidationError(
+                f"{label} is not valid UTF-8: {ex}"
+            ) from ex
+    raise RuleValidationError(f"{label} must be text")
+
+
+def discover_alert_rule_sources(redis_client, warning=None):
+    """Return provider-published rule fields in deterministic source order."""
+    if warning is None:
+        warning = _stderr_warning
+
+    try:
+        raw_keys = list(
+            redis_client.scan_iter("module/*/metrics_alert_rules")
+        )
+    except Exception as ex:
+        raise RuleInfrastructureError(
+            f"cannot discover module alert-rule sources in Redis: {ex}"
+        ) from ex
+
+    redis_keys = {}
+    for raw_key in sorted(raw_keys, key=_redis_sort_key):
+        try:
+            redis_key = _decode_redis_identifier(raw_key, "Redis key")
+        except RuleValidationError as ex:
+            warning(f"Skipped module alert-rule hash: {ex}")
+            continue
+        redis_keys.setdefault(redis_key, raw_key)
+
+    sources = []
+    for redis_key in sorted(redis_keys):
+        parts = redis_key.split("/")
+        if (
+            len(parts) != 3
+            or parts[0] != "module"
+            or parts[2] != "metrics_alert_rules"
+        ):
+            warning(
+                f"Skipped module alert-rule hash {redis_key!r}: "
+                "invalid Redis key shape"
+            )
+            continue
+
+        try:
+            fields = redis_client.hgetall(redis_keys[redis_key])
+        except Exception as ex:
+            raise RuleInfrastructureError(
+                f"cannot read module alert-rule hash {redis_key!r}: {ex}"
+            ) from ex
+        if not isinstance(fields, Mapping):
+            raise RuleInfrastructureError(
+                f"module alert-rule hash {redis_key!r} did not return a mapping"
+            )
+
+        for raw_field, payload in sorted(
+            fields.items(), key=lambda item: _redis_sort_key(item[0])
+        ):
+            try:
+                rule_set_name = _decode_redis_identifier(
+                    raw_field, "rule-set name"
+                )
+            except RuleValidationError as ex:
+                warning(
+                    f"Skipped module alert rule from {redis_key!r}: {ex}"
+                )
+                continue
+            sources.append(
+                AlertRuleSource(
+                    module_id=parts[1],
+                    rule_set_name=rule_set_name,
+                    payload=payload,
+                    redis_key=redis_key,
+                )
+            )
+
+    return sorted(
+        sources,
+        key=lambda source: (
+            source.module_id,
+            source.rule_set_name,
+            source.redis_key,
+        ),
+    )
+
+
+def _source_identity(source):
+    return (source.redis_key, source.rule_set_name)
+
+
+def _ownership_header(source):
+    metadata = {
+        "field": source.rule_set_name,
+        "redis_key": source.redis_key,
+    }
+    return OWNERSHIP_PREFIX + json.dumps(
+        metadata,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ) + "\n"
+
+
+def _read_rule_owner(path):
+    try:
+        with open(path, "rb") as stream:
+            first_line = stream.readline(4096)
+    except OSError as ex:
+        raise RuleInfrastructureError(
+            f"cannot read generated rule ownership from {path}: {ex}"
+        ) from ex
+
+    prefix = OWNERSHIP_PREFIX.encode("ascii")
+    if not first_line.startswith(prefix):
+        return None
+    try:
+        metadata = json.loads(first_line[len(prefix):].decode("ascii"))
+    except (UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    redis_key = metadata.get("redis_key")
+    rule_set_name = metadata.get("field")
+    if not isinstance(redis_key, str) or not isinstance(rule_set_name, str):
+        return None
+    return (redis_key, rule_set_name)
+
+
+def _serialize_candidate(source, document):
+    try:
+        payload = yaml.safe_dump(
+            document,
+            allow_unicode=True,
+            sort_keys=False,
+        )
+    except Exception as ex:
+        raise RuleValidationError(
+            f"{source.context}: cannot serialize effective rule document: {ex}"
+        ) from ex
+    return _ownership_header(source) + payload
+
+
+def _install_candidate(
+    source, document, rules_directory, promtool_runner
+):
+    serialized = _serialize_candidate(source, document)
+    destination = os.path.join(rules_directory, source.filename)
+    temporary_path = None
+    try:
+        descriptor, temporary_path = tempfile.mkstemp(
+            dir=rules_directory,
+            prefix=f".{source.filename}.",
+            suffix=".tmp",
+            text=True,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(serialized)
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o644)
+            os.fsync(stream.fileno())
+
+        try:
+            promtool_runner.check_rules(temporary_path)
+        except RuleValidationError as ex:
+            raise RuleValidationError(
+                f"{source.context}: promtool check rules failed: {ex}"
+            ) from ex
+
+        os.replace(temporary_path, destination)
+        temporary_path = None
+    except OSError as ex:
+        raise RuleInfrastructureError(
+            f"cannot atomically install {destination}: {ex}"
+        ) from ex
+    finally:
+        if temporary_path is not None:
+            try:
+                os.remove(temporary_path)
+            except FileNotFoundError:
+                pass
+            except OSError as ex:
+                raise RuleInfrastructureError(
+                    f"cannot remove temporary rule file {temporary_path}: {ex}"
+                ) from ex
+
+
+def _is_generated_rule_name(filename):
+    return (
+        filename.startswith(GENERATED_RULE_PREFIX)
+        and filename.endswith(GENERATED_RULE_SUFFIX)
+    )
+
+
+def _generated_rule_entries(rules_directory):
+    try:
+        with os.scandir(rules_directory) as entries:
+            return sorted(
+                (
+                    entry
+                    for entry in entries
+                    if _is_generated_rule_name(entry.name)
+                    and (
+                        entry.is_file(follow_symlinks=False)
+                        or entry.is_symlink()
+                    )
+                ),
+                key=lambda entry: entry.name,
+            )
+    except OSError as ex:
+        raise RuleInfrastructureError(
+            f"cannot scan generated rule directory {rules_directory}: {ex}"
+        ) from ex
+
+
+def _clean_up_stale_generated_rules(rules_directory, active_sources):
+    for entry in _generated_rule_entries(rules_directory):
+        if entry.is_symlink():
+            owner = None
+        else:
+            owner = _read_rule_owner(entry.path)
+        source = active_sources.get(owner)
+        if source is not None and entry.name == source.filename:
+            continue
+        try:
+            os.remove(entry.path)
+        except OSError as ex:
+            raise RuleInfrastructureError(
+                f"cannot remove stale generated rule {entry.path}: {ex}"
+            ) from ex
+
+
+def _report_source_failure(source, error, warning):
+    detail = str(error)
+    context_prefix = f"{source.context}: "
+    if detail.startswith(context_prefix):
+        detail = detail[len(context_prefix):]
+    warning(f"Skipped module alert rule from {source.context}: {detail}")
+
+
+def provision_module_alert_rules(
+    redis_client,
+    rules_directory="rules.d",
+    promtool_runner=None,
+    warning=None,
+):
+    """Materialize provider-published rules without touching legacy rules."""
+    if warning is None:
+        warning = _stderr_warning
+    try:
+        os.makedirs(rules_directory, exist_ok=True)
+    except OSError as ex:
+        raise RuleInfrastructureError(
+            f"cannot create generated rule directory {rules_directory}: {ex}"
+        ) from ex
+
+    sources = discover_alert_rule_sources(redis_client, warning)
+    active_sources = {}
+    sources_by_filename = defaultdict(list)
+    for source in sources:
+        try:
+            filename = source.filename
+        except RuleValidationError as ex:
+            _report_source_failure(source, ex, warning)
+            continue
+        active_sources[_source_identity(source)] = source
+        sources_by_filename[filename].append(source)
+
+    runner = promtool_runner
+    for filename, owners in sorted(sources_by_filename.items()):
+        if len(owners) > 1:
+            contexts = ", ".join(owner.context for owner in owners)
+            for source in owners:
+                warning(
+                    f"Skipped module alert rule from {source.context}: output "
+                    f"filename collision for {filename!r} among {contexts}"
+                )
+            continue
+        source = owners[0]
+        if runner is None:
+            runner = PromtoolRunner()
+        try:
+            # Validated source IDs cannot contain ':', so different sources
+            # have disjoint group namespaces. Local duplicates are rejected
+            # by the transformer.
+            document = transform_alert_rule(source, runner, warning)
+            _install_candidate(source, document, rules_directory, runner)
+        except RuleValidationError as ex:
+            _report_source_failure(source, ex, warning)
+
+    _clean_up_stale_generated_rules(rules_directory, active_sources)
