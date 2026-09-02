@@ -62,6 +62,18 @@ same-name alerts from different module instances from sharing an identifier.
 Mimir forwarding is unaffected: the complete original alert payload is
 forwarded without modification.
 
+### Legacy load-alarm filtering
+
+Identifiers beginning with `load` are logged as notices and suppressed for
+portal delivery only when the original alert has no non-empty string
+`module_id`. Missing, empty, and non-string values retain this legacy behavior.
+
+Module alerts such as `LoadQueueHigh` with `module_id: postgresql1` are sent
+normally as `loadqueuehigh:postgresql1:node:<node_id>`, for both firing and
+resolved notifications. Portal delivery still requires the configured
+subscription credentials. Filtering uses the original module label, not an
+inference from the formatted identifier. It does not affect Mimir forwarding.
+
 ### Examples
 
 Raise an alert for /boot disk full:

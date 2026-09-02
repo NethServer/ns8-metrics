@@ -61,7 +61,8 @@ Configuration files are saved inside the state directory. The most important fil
 
 - prometheus.yml: Prometheus configuration
   - prometheus.d: directory containing node configuration files
-  - rules.d: directory containing custom alert rules
+  - rules.d: directory containing built-in, legacy custom, and generated
+    provider alert rules
 - alertmanager.yml: Alertmanager configuration
   - templates.d: directory containing custom alert templates
 - local.yml: Grafana configuration, if enabled
@@ -203,7 +204,7 @@ When a module wants to add a new target, it must use the `metrics-target-changed
 The `provision-prometheus` script searches for targets in:
 
 ```text
-module/<publisher_id>/metrics_targets
+module/<module_id>/metrics_targets
 ```
 
 The Redis hash contains:
@@ -211,11 +212,11 @@ The Redis hash contains:
 - field `<target_type>`, a stable name identifying the target type;
 - value `<yaml_config>`, a Prometheus `file_sd_config` YAML list.
 
-The publisher ID from the Redis key is authoritative. For every target,
+The module ID from the Redis key is authoritative. For every target,
 provisioning:
 
 - creates the `labels` mapping when it is absent;
-- sets `module_id` to `<publisher_id>`;
+- sets `module_id` to `<module_id>`;
 - sets `target_type` to the Redis field name;
 - preserves every other label.
 
@@ -226,6 +227,14 @@ field, and item position.
 Each Redis field is validated independently. A malformed field is skipped
 without preventing valid fields from the same or other publishers from being
 materialized.
+
+Target hashes must have exactly the form `module/<module_id>/metrics_targets`.
+Module IDs and target field names must be non-empty and use only ASCII letters,
+digits, `.`, `_`, and `-`; neither may be `.` or `..`. The generated filename
+must fit the 255-byte limit. Invalid names are rejected before file access and
+reported with their Redis key and field. Actual filesystem failures still
+abort provisioning. Generated targets are rebuilt on each pass; they do not
+have the previous-valid-file retention provided for alert rules.
 
 For example, publish a PostgreSQL target with:
 
@@ -258,7 +267,7 @@ Provisioning adds the authoritative labels:
 The generated configuration is saved as:
 
 ```text
-prometheus.d/provision_<publisher_id>_<target_type>.yml
+prometheus.d/provision_<module_id>_<target_type>.yml
 ```
 
 After adding, updating, or removing a target, the publisher must emit the
@@ -278,6 +287,142 @@ Generic downstream identifiers are also scoped by a non-empty `module_id`,
 preventing a resolved alert from one module instance from clearing a same-name
 alert that is still firing for another instance. Explicit legacy mappings
 retain their existing identifiers.
+
+### Module-provided alert rules
+
+A module instance publishes alert rules in:
+
+```text
+module/<module_id>/metrics_alert_rules
+```
+
+Each hash field is a stable `<rule_set_name>`. Its value is UTF-8 YAML in one of
+two forms. A complete rule file contains named groups:
+
+```yaml
+groups:
+- name: postgresql.rules
+  rules:
+  - alert: PostgresqlDown
+    expr: up{target_type="postgres"} == 0
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary_en: PostgreSQL is down
+      summary_it: PostgreSQL non raggiungibile
+      description_en: The PostgreSQL exporter cannot be scraped.
+      description_it: Impossibile contattare l'exporter PostgreSQL.
+```
+
+A single alert rule omits the `groups` wrapper:
+
+```yaml
+alert: PostgresqlConnectionsHigh
+expr: pg_stat_activity_count{target_type="postgres"} > 100
+for: 10m
+labels:
+  severity: warning
+annotations:
+  summary_en: Too many PostgreSQL connections
+  summary_it: Troppe connessioni PostgreSQL
+  description_en: PostgreSQL has more than 100 active connections.
+  description_it: PostgreSQL ha più di 100 connessioni attive.
+```
+
+Module IDs and rule-set names may contain ASCII letters, digits, `.`, `_`,
+and `-`. A field generates:
+
+```text
+rules.d/provision_<module_id>_<rule_set_name>.yml
+```
+
+Single rules receive group name
+`ns8:<module_id>:<rule_set_name>`. Groups in complete files receive
+`ns8:<module_id>:<rule_set_name>:<local_group_name>`. Publishers must not
+use the reserved `ns8:` prefix for local group names.
+
+Validated source IDs cannot contain `:`, so different sources have disjoint
+group namespaces. Local duplicate names are rejected; no separate global
+group-collision scan is needed.
+
+#### Identity and query scoping
+
+The module ID from the Redis key is authoritative for targets, expressions,
+and alert labels. Every vector or range selector is rewritten with the exact
+module ID matcher. For example, a rule published by `postgresql1` changes from:
+
+```promql
+up{target_type="postgres"} == 0
+```
+
+to an equivalent canonical expression containing:
+
+```promql
+up{module_id="postgresql1",target_type="postgres"} == 0
+```
+
+The generated rule also has the static label `module_id: postgresql1`. This
+keeps the alert identity when an aggregation removes labels from its query
+result. Rules must use metrics belonging exclusively to their publisher;
+node-wide, cluster-wide, or cross-module rules belong in the built-in metrics
+rules.
+
+Existing exact `module_id` matchers are retained after canonical formatting.
+Broader, partial, negative, regular-expression, mixed, or conflicting matchers
+and labels are replaced with the module ID and produce a warning.
+Expressions without a vector or range selector are rejected.
+
+Rewriting uses five parser operations from the pinned Prometheus image:
+format, add a temporary matcher, remove authored module matchers, set the
+authoritative matcher, and remove the temporary matcher. Its temporary name
+is chosen by checking the formatted expression for absence, without an extra
+parser probe. Prometheus 3.5.3 cannot rewrite a selector containing multiple
+`module_id` matchers; such a source is rejected with previous-valid retention.
+
+#### Validation, retention, and warnings
+
+Every field is validated independently. Invalid UTF-8, identifiers, YAML
+shapes, recording rules, PromQL, filename collisions, duplicate local group
+names, and failed `promtool` validation reject only their source field. If that
+exact field had a previous valid generated file, it is retained byte-for-byte.
+A new invalid field creates no file, while valid fields from other publishers
+continue to be installed.
+
+Missing or non-recommended severity values and incomplete bilingual
+annotations warn but remain loadable.
+
+There is no metric-existence advisory after reload: valid expressions may
+reference metrics that have not been scraped yet. There is also no additional
+duplicate-identity warning for repeated `(alertname, module_id)` pairs.
+Severity and other labels can distinguish same-name alert instances; normal
+`promtool` rule validation still applies.
+
+After adding, replacing, or deleting alert-rule fields, the publisher emits an
+empty event from its own channel:
+
+```bash
+redis-cli -x hset \
+  module/postgresql1/metrics_alert_rules \
+  postgres < alerts.yml
+redis-cli publish \
+  module/postgresql1/event/metrics-alert-rules-changed '{}'
+```
+
+An active Prometheus instance is reloaded and verified, with a checked restart
+fallback. An inactive service remains stopped and consumes the generated files
+at its next normal start. Publishers should delete obsolete fields during
+uninstall, disable, or restore and emit the event again. Accepted alerts
+continue through the configured portal, Mimir, and email paths.
+
+The legacy portal filter for identifiers beginning with `load` applies only
+when `module_id` is absent, empty, or not a string. Module alerts such as
+`LoadQueueHigh` are forwarded normally when subscription credentials are
+configured. Mimir forwarding is unaffected by this portal-only filter.
+
+This publisher contract applies only to `metrics_alert_rules`. The existing
+experimental metrics-local `custom_alerts` interface remains a separate legacy
+path and is not migrated by this feature.
 
 ### Provisioning Grafana
 
