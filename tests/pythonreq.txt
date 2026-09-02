@@ -1,2 +1,4 @@
 robotframework
 robotframework-sshlibrary
+PyYAML
+aiohttp
