@@ -290,7 +290,11 @@ def main():
 
     # Generate alertmanager configuration
     generate_alertmanagr_config(redis_client)
-    metrics_alert_rules.provision_module_alert_rules(redis_client)
+    # Let rule validation reject invalid UTF-8 fields without aborting HGETALL.
+    raw_redis_client = agent.redis_connect(
+        use_replica=True, decode_responses=False,
+    )
+    metrics_alert_rules.provision_module_alert_rules(raw_redis_client)
     generate_custom_alertmanager_rules(redis_client)
     generate_custom_alertmanager_templates(redis_client)
 

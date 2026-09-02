@@ -232,7 +232,6 @@ class SourceAndSchemaTests(unittest.TestCase):
                     metrics_alert_rules.generated_rule_filename(module_id, name)
 
     def test_rejects_invalid_utf8(self):
-        # Retain byte-level coverage while live Redis decoding aborts hash reads.
         source = module_source(payload=b"\xff")
 
         with self.assertRaisesRegex(

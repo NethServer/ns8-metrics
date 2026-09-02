@@ -36,7 +36,7 @@ def load_provision_prometheus():
     agent_module = types.ModuleType('agent')
     agent_module.get_hostname = lambda: 'node.example.org'
     agent_module.get_smarthost_settings = lambda redis_client: {'enabled': False}
-    agent_module.redis_connect = lambda use_replica: None
+    agent_module.redis_connect = lambda use_replica, decode_responses=True: None
     sys.modules['agent'] = agent_module
 
     bin_directory = (
@@ -60,22 +60,37 @@ provision_prometheus = load_provision_prometheus()
 
 
 class FakeRedis:
-    def __init__(self, hashes=None, sets=None):
+    def __init__(self, hashes=None, sets=None, decode_responses=True):
         self.hashes = hashes or {}
         self.sets = sets or {}
+        self.decode_responses = decode_responses
+
+    def response(self, value):
+        if isinstance(value, str):
+            value = value.encode('utf-8')
+        if isinstance(value, bytes) and self.decode_responses:
+            return value.decode('utf-8')
+        return value
 
     def exists(self, key):
         return key in self.hashes
 
     def hgetall(self, key):
-        return self.hashes.get(key, {})
+        if isinstance(key, bytes):
+            key = key.decode('utf-8')
+        return {
+            self.response(field): self.response(value)
+            for field, value in self.hashes.get(key, {}).items()
+        }
 
     def hvals(self, key):
         return list(self.hgetall(key).values())
 
     def scan_iter(self, pattern):
         keys = sorted(set(self.hashes) | set(self.sets))
-        return iter(key for key in keys if fnmatch.fnmatch(key, pattern))
+        return (
+            self.response(key) for key in keys if fnmatch.fnmatch(key, pattern)
+        )
 
     def sismember(self, key, value):
         return value in self.sets.get(key, set())
@@ -165,12 +180,17 @@ class ProviderTargetTests(unittest.TestCase):
 
 
 class ProvisioningIntegrationTests(unittest.TestCase):
-    def test_main_keeps_existing_custom_generator_and_creates_directories(self):
-        redis_client = FakeRedis(hashes={
+    def test_main_isolates_invalid_utf8_and_keeps_custom_rules(self):
+        hashes = {
             'module/metrics1/custom_alerts': {
                 'local': 'alert: LocalAlert\nexpr: up == 0\n',
             },
-        })
+            'module/app1/metrics_alert_rules': {
+                'invalid': b'alert: InvalidAlert\nexpr: up == 0\n# \xff\n',
+                'valid': 'alert: ProviderAlert\nexpr: up == 0\n',
+            },
+        }
+        warning_output = io.StringIO()
 
         with tempfile.TemporaryDirectory() as temp_directory:
             with working_directory(temp_directory):
@@ -179,12 +199,20 @@ class ProvisioningIntegrationTests(unittest.TestCase):
                     patch.object(
                         provision_prometheus.agent,
                         'redis_connect',
-                        return_value=redis_client,
+                        side_effect=lambda use_replica, decode_responses=True: FakeRedis(
+                            hashes=hashes, decode_responses=decode_responses,
+                        ),
                     ),
                     patch.object(
                         provision_prometheus.metrics_alert_rules,
-                        'provision_module_alert_rules',
-                    ) as provision_rules,
+                        'PromtoolRunner',
+                    ),
+                    patch.object(
+                        provision_prometheus.metrics_alert_rules,
+                        'rewrite_promql_expression',
+                        return_value='up{module_id="app1"} == 0',
+                    ),
+                    redirect_stderr(warning_output),
                 ):
                     with warnings.catch_warnings():
                         warnings.simplefilter('ignore', ResourceWarning)
@@ -193,11 +221,22 @@ class ProvisioningIntegrationTests(unittest.TestCase):
                 self.assertTrue(pathlib.Path('prometheus.d').is_dir())
                 self.assertTrue(pathlib.Path('rules.d').is_dir())
                 self.assertTrue(pathlib.Path('rules.d/custom.yml').is_file())
-                provision_rules.assert_called_once_with(redis_client)
+                self.assertFalse(pathlib.Path('rules.d/provision_app1_invalid.yml').exists())
+                with open('rules.d/provision_app1_valid.yml', encoding='utf-8') as stream:
+                    provider_rules = yaml.safe_load(stream)
 
                 with open('rules.d/custom.yml', encoding='utf-8') as stream:
                     custom_rules = yaml.safe_load(stream)
 
+        self.assertIn('payload is not valid UTF-8', warning_output.getvalue())
+        self.assertEqual(
+            provider_rules['groups'][0]['rules'][0]['alert'],
+            'ProviderAlert',
+        )
+        self.assertEqual(
+            provider_rules['groups'][0]['rules'][0]['labels']['module_id'],
+            'app1',
+        )
         self.assertEqual(custom_rules['groups'][0]['name'], 'Custom')
         self.assertEqual(
             custom_rules['groups'][0]['rules'][0]['alert'],
