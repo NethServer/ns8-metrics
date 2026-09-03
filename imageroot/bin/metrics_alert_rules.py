@@ -630,7 +630,7 @@ def _install_candidate(
     try:
         descriptor, temporary_path = tempfile.mkstemp(
             dir=rules_directory,
-            prefix=f".{source.filename}.",
+            prefix=".rule-",
             suffix=".tmp",
             text=True,
         )
