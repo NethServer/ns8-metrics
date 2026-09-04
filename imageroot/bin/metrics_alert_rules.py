@@ -315,7 +315,7 @@ def rewrite_promql_expression(expression, source, promtool_runner, warning=None)
         warning = _stderr_warning
 
     formatted = promtool_runner(
-        ["--experimental", "promql", "format", expression]
+        ["--experimental", "promql", "format", "--", expression]
     )
     # Formatting exposes ASCII label names literally, including quoted input.
     # A name absent from the whole expression cannot be an authored matcher.
@@ -328,6 +328,7 @@ def rewrite_promql_expression(expression, source, promtool_runner, warning=None)
             "promql",
             "label-matchers",
             "set",
+            "--",
             formatted,
             placeholder_label,
             PLACEHOLDER_VALUE,
@@ -344,6 +345,7 @@ def rewrite_promql_expression(expression, source, promtool_runner, warning=None)
             "promql",
             "label-matchers",
             "delete",
+            "--",
             with_placeholder,
             "module_id",
         ]
@@ -354,6 +356,7 @@ def rewrite_promql_expression(expression, source, promtool_runner, warning=None)
             "promql",
             "label-matchers",
             "set",
+            "--",
             without_module_id,
             "module_id",
             source.module_id,
@@ -365,6 +368,7 @@ def rewrite_promql_expression(expression, source, promtool_runner, warning=None)
             "promql",
             "label-matchers",
             "delete",
+            "--",
             scoped_with_placeholder,
             placeholder_label,
         ]
