@@ -50,16 +50,17 @@ async def send_alert(url, value, alert, retry=3):
         else:
             print("send_alert aborted:", value, alert, ex_message, file=sys.stderr)
 
-async def raise_alert(value, alert):
+async def raise_alert(value, alert, module_id=None):
     if value == CLEAR:
         svalue = 'CLEAR'
     elif value == CRITICAL:
         svalue = 'CRITICAL'
     else:
         svalue = 'UNKNOWN'
-    if alert.startswith('load'):
+    module_alert = isinstance(module_id, str) and bool(module_id)
+    if alert.startswith('load') and not module_alert:
         print('NOTICE', svalue, alert, file=sys.stderr)
-        return # do not send load alarm at all, just log it
+        return # preserve the legacy filter for module-less load alarms
     else:
         print('ALERT', svalue, alert, file=sys.stderr)
     if not auth_token:
@@ -150,7 +151,7 @@ async def handle_post_request(request):
                 value = CLEAR
             else:
                 value = UNKNOWN
-            await raise_alert(value, alert_id)
+            await raise_alert(value, alert_id, module_id=labels.get('module_id'))
         return aiohttp.web.Response(text="Alerts processed", status=200)
     except Exception as e:
         return aiohttp.web.Response(text=str(e), status=500)
