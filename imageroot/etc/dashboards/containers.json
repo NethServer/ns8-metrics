@@ -1888,7 +1888,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Volumes, container images and module state are three non-overlapping buckets. Rootfull modules share one overlay image store that cannot be split per module, so it is charged once to `core` and they show no image usage of their own. The image walk stays on one filesystem, like `du -sx`, while the volume and state walks cross mounts. Hardlinks are deduped per module, so a file hardlinked across two modules is charged to both and a sum over modules can exceed the space really occupied. Refreshed once a day.",
+      "description": "Volumes, container images and module state are three non-overlapping buckets. Rootfull modules share one overlay image store that cannot be split per module, so it is charged once to `core` and they show no image usage of their own. The image walk stays on one filesystem, like `du -sx`, while the volume and state walks cross mounts. Hardlinks are deduped per module, so a file hardlinked across two modules is charged to both and a sum over modules can exceed the space really occupied. Refreshed once a day. Only the 10 largest modules are drawn, so the bars stay readable on a crowded node; pick modules in the variable above to see any of the others.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2055,7 +2055,7 @@
           "refId": "D"
         }
       ],
-      "title": "Disk usage by module",
+      "title": "Disk usage by module (top 10)",
       "transformations": [
         {
           "id": "filterFieldsByName",
@@ -2097,6 +2097,12 @@
                 "field": "Total"
               }
             ]
+          }
+        },
+        {
+          "id": "limit",
+          "options": {
+            "limitField": 10
           }
         },
         {
