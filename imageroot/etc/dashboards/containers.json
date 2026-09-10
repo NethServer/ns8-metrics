@@ -287,7 +287,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Module disk usage: volumes, container images and state. Refreshed every 15 minutes. A file hardlinked across two modules is charged to both, so this can exceed the space really occupied.",
+      "description": "Module disk usage: volumes, container images and state. Refreshed once a day, so figures can be up to a day old. A file hardlinked across two modules is charged to both, so this can exceed the space really occupied.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1888,7 +1888,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Volumes, container images and module state are three non-overlapping buckets. Rootfull modules share one overlay image store that cannot be split per module, so it is charged once to `core` and they show no image usage of their own. The image walk stays on one filesystem, like `du -sx`, while the volume and state walks cross mounts. Hardlinks are deduped per module, so a file hardlinked across two modules is charged to both and a sum over modules can exceed the space really occupied.",
+      "description": "Volumes, container images and module state are three non-overlapping buckets. Rootfull modules share one overlay image store that cannot be split per module, so it is charged once to `core` and they show no image usage of their own. The image walk stays on one filesystem, like `du -sx`, while the volume and state walks cross mounts. Hardlinks are deduped per module, so a file hardlinked across two modules is charged to both and a sum over modules can exceed the space really occupied. Refreshed once a day.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2115,7 +2115,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Volume metrics are refreshed every 15 minutes, so pick a range of hours or days to see a trend.",
+      "description": "Volume metrics are refreshed once a day, so a trend needs weeks of range: this panel keeps its own 14-day window whatever the dashboard range is. Steps are the daily collection passes, not real jumps at that instant.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2206,6 +2206,7 @@
           "refId": "A"
         }
       ],
+      "timeFrom": "14d",
       "title": "Disk usage growth",
       "type": "timeseries"
     },
@@ -2214,7 +2215,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Volume names are unique per module, not per node: `openldap1` and `samba1` both own a volume named `data`. Size is the space actually occupied on disk and matches `du -s -B1`; a zero is a real measurement of an empty volume.",
+      "description": "Volume names are unique per module, not per node: `openldap1` and `samba1` both own a volume named `data`. Size is the space actually occupied on disk and matches `du -s -B1`; a zero is a real measurement of an empty volume. Refreshed once a day.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2638,7 +2639,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "description": "Time since the last successful volume collection. The collector runs every 15 minutes.",
+          "description": "Time since the last successful volume collection. The collector runs once a day, plus up to an hour of jitter, so a value below 25h is normal. The textfile stays in place when the collector fails, so the disk figures go stale rather than disappearing: this is the only signal that they did.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2655,11 +2656,11 @@
                   },
                   {
                     "color": "orange",
-                    "value": 2400
+                    "value": 93600
                   },
                   {
                     "color": "red",
-                    "value": 4200
+                    "value": 172800
                   }
                 ]
               },
@@ -2784,7 +2785,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "description": "Duration of the last volume collection pass. It walks every module tree, so seconds are expected.",
+          "description": "Duration of the last volume collection pass. It walks every module tree, so seconds are expected; a pass stretching toward the daily interval means the walk can no longer keep up.",
           "fieldConfig": {
             "defaults": {
               "color": {
