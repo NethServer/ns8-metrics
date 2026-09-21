@@ -391,6 +391,8 @@ def _rewrite_module_identity(document, source, promtool_runner, warning):
     for group in document["groups"]:
         group_labels = group.get("labels")
         if group_labels is not None:
+            # YAML aliases can share this mapping with rule annotations.
+            group_labels = group["labels"] = dict(group_labels)
             if (
                 "module_id" in group_labels
                 and group_labels["module_id"] != source.module_id
@@ -407,7 +409,7 @@ def _rewrite_module_identity(document, source, promtool_runner, warning):
             rule["expr"] = rewrite_promql_expression(
                 rule["expr"], source, promtool_runner, warning
             )
-            labels = rule.setdefault("labels", {})
+            labels = rule["labels"] = dict(rule.get("labels", {}))
             if "module_id" in labels and labels["module_id"] != source.module_id:
                 _warn_label_override(
                     source,
