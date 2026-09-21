@@ -3,7 +3,7 @@ Documentation    Test provider targets and alert rules through provisioning and 
 Resource         resources/module_alert_rules.resource
 Suite Setup      Initialize Module Rule Fixtures
 Suite Teardown   Finish Module Rule Fixtures
-Test Setup       Reset Module Rule Fixtures
+Test Setup       Prepare Module Rule Fixtures
 Test Teardown    Reset Module Rule Fixtures
 
 
@@ -13,7 +13,6 @@ Provider Targets Receive Their Redis Owner Identity
     ${target_b} =    Target Payload With Module Label
     ...    19092
     ...    another1
-    ${since} =    Current Epoch
 
     Write Publisher Target    ${RULE_PUBLISHER_A}    ${target_a}
     Write Publisher Target    ${RULE_PUBLISHER_B}    ${target_b}
@@ -34,7 +33,9 @@ Provider Targets Receive Their Redis Owner Identity
     ...    ${event_cursor}
     ...    ${RULE_PUBLISHER_A}
     ...    metrics-target-changed
-    Journal Should Contain    ${since}    overwritten with '${RULE_PUBLISHER_B}'
+    Source Journal Should Contain    ${event_cursor}
+    ...    Target label conflict at Redis key module/${RULE_PUBLISHER_B}/metrics_targets, field ${TARGET_FIELD}, item 0
+    ...    overwritten with '${RULE_PUBLISHER_B}'
 
 Two Publishers Load Full And Single Rules Independently
     ${target_a} =    Target Payload Without Labels    19091
@@ -144,7 +145,6 @@ Invalid And Warning Sources Are Isolated
     ...    ${RULE_PUBLISHER_B}
     ...    ${SECONDARY_RULE_FIELD}
     ...    ${duplicate_b}
-    ${since} =    Current Epoch
     ${event_cursor} =    Signal Module Rule Change    ${RULE_PUBLISHER_A}
 
     Wait Until Keyword Succeeds    90s    2s
@@ -164,9 +164,12 @@ Invalid And Warning Sources Are Isolated
     ...    ${PRIMARY_RULE_FIELD}
     Should Be Equal    ${checksum_a_after}    ${checksum_a_before}
     Should Not Be Equal    ${checksum_b_after}    ${checksum_b_before}
-    Journal Should Contain    ${since}    Skipped module alert rule
-    Journal Should Contain    ${since}    no severity label
-    Journal Should Contain    ${since}    missing bilingual annotations
+    Source Journal Should Contain    ${event_cursor}
+    ...    module/${RULE_PUBLISHER_A}/metrics_alert_rules field '${PRIMARY_RULE_FIELD}'
+    ...    Skipped module alert rule
+    Source Journal Should Contain    ${event_cursor}
+    ...    module/${RULE_PUBLISHER_B}/metrics_alert_rules field '${SECONDARY_RULE_FIELD}'
+    ...    no severity label    missing bilingual annotations
 
 Removed Provider Rules Preserve Built-In Rules
     ${rule} =    Single Alert Rule Payload
@@ -237,39 +240,39 @@ Rule Events Leave An Inactive Prometheus Stopped
     Prometheus Service Should Be Inactive
 
 Malformed Target Documents Are Isolated
-    [Template]    Target Structure Should Be Rejected
-    - targets: [\n                                  while parsing a flow node
-    targets: ["127.0.0.1:19091"]                    target document must be a list of mappings
-    - "127.0.0.1:19091"                             target item 0 must be a mapping
-    - targets: ["127.0.0.1:19091"]\n\ \ labels: invalid    target item 0 labels must be a mapping
+    Queue Target Structure    - targets: [\n                                  while parsing a flow node
+    Queue Target Structure    targets: ["127.0.0.1:19091"]                    target document must be a list of mappings
+    Queue Target Structure    - "127.0.0.1:19091"                             target item 0 must be a mapping
+    Queue Target Structure    - targets: ["127.0.0.1:19091"]\n\ \ labels: invalid    target item 0 labels must be a mapping
+    Check Rejected Target Batch
 
 Invalid Target Field Names Are Isolated
-    [Template]    Target Field Should Be Rejected
-    ${EMPTY}
-    .
-    ..
-    bad/name
-    ../escaped
-    bad\\name
-    has space
-    has:colon
-    métrics
-    has\x00nul
-    has\nnewline
-    has'quote"$(false)`false`
+    Queue Target Field    ${EMPTY}
+    Queue Target Field    .
+    Queue Target Field    ..
+    Queue Target Field    bad/name
+    Queue Target Field    ../escaped
+    Queue Target Field    bad\\name
+    Queue Target Field    has space
+    Queue Target Field    has:colon
+    Queue Target Field    métrics
+    Queue Target Field    has\x00nul
+    Queue Target Field    has\nnewline
+    Queue Target Field    has'quote"$(false)`false`
+    Check Rejected Target Batch
 
 Invalid Target Publishers Are Isolated
-    [Template]    Target Publisher Should Be Rejected
-    ${EMPTY}         invalid module ID
-    .                invalid module ID
-    ..               invalid module ID
-    a/b              invalid Redis key shape
-    ../escaped       invalid Redis key shape
-    has space        invalid module ID
-    has:colon        invalid module ID
-    bad\\name        invalid module ID
-    métrics1         invalid module ID
-    has'quote        invalid module ID
+    Queue Target Publisher    ${EMPTY}         invalid module ID
+    Queue Target Publisher    .                invalid module ID
+    Queue Target Publisher    ..               invalid module ID
+    Queue Target Publisher    a/b              invalid Redis key shape
+    Queue Target Publisher    ../escaped       invalid Redis key shape
+    Queue Target Publisher    has space        invalid module ID
+    Queue Target Publisher    has:colon        invalid module ID
+    Queue Target Publisher    bad\\name        invalid module ID
+    Queue Target Publisher    métrics1         invalid module ID
+    Queue Target Publisher    has'quote        invalid module ID
+    Check Rejected Target Batch
 
 Target Identifier Spelling And Matching Labels Are Preserved
     ${publisher} =    Set Variable    Phase5_SQL_1.dev-x
@@ -317,38 +320,38 @@ Target Filename Byte Limit Rejects Only The Longer Field
     ${cursor} =    Provision Target Fixtures
     ${labels} =    Create Dictionary    module_id=${RULE_PUBLISHER_A}    target_type=${field}
     Target Document Should Have Labels    ${RULE_PUBLISHER_A}    ${field}    ${labels}
-    Source Journal Should Contain    ${cursor}    Skipped target '${field}x'
+    Source Journal Should Contain    ${cursor}    Skipped target '${field}x' for module '${RULE_PUBLISHER_A}' at Redis key 'module/${RULE_PUBLISHER_A}/metrics_targets'
     ...    generated target filename exceeds 255 bytes
     Directory Should Contain Only Added Files    prometheus.d    ${baseline}
     ...    provision_${RULE_PUBLISHER_A}_${field}.yml
     ...    provision_${RULE_PUBLISHER_A}_${TARGET_FIELD}.yml
 
 Invalid Rule Encodings And YAML Are Isolated
-    [Template]    Rule Encoding Should Be Rejected
-    utf8    payload is not valid UTF-8
-    yaml    invalid YAML
+    Queue Rule Encoding    utf8    payload is not valid UTF-8
+    Queue Rule Encoding    yaml    invalid YAML
+    Check Rejected Rule Batch
 
 Unsupported Rule Schemas Are Isolated
-    [Template]    Rule Schema Should Be Rejected
-    document    __self__       scalar              payload must decode to a mapping
-    document    __self__       ${EMPTY_MAPPING}    payload must be a groups document or a single alert rule
-    document    groups         invalid             'groups' must be a list
-    group       __self__       invalid             group 0 must be a mapping
-    group       name           __remove__          group 0 must have a non-empty string name
-    group       name           ${42}               group 0 must have a non-empty string name
-    group       rules          __remove__          must have a rules list
-    group       rules          invalid             must have a rules list
-    group       labels         invalid             labels must be a mapping
-    rule        __self__       invalid             rule 0 must be a mapping
-    rule        alert          __remove__          must have a non-empty string 'alert' field
-    rule        alert          ${SPACE}            must have a non-empty string 'alert' field
-    rule        alert          ${42}               must have a non-empty string 'alert' field
-    rule        expr           __remove__          must have a non-empty string 'expr' field
-    rule        expr           ${EMPTY}            must have a non-empty string 'expr' field
-    rule        expr           ${42}               must have a non-empty string 'expr' field
-    rule        record         saved_up            is a recording rule; only alerts are supported
-    rule        labels         invalid             labels must be a mapping
-    rule        annotations    invalid             annotations must be a mapping
+    Queue Rule Schema    document    __self__       scalar              payload must decode to a mapping
+    Queue Rule Schema    document    __self__       ${EMPTY_MAPPING}    payload must be a groups document or a single alert rule
+    Queue Rule Schema    document    groups         invalid             'groups' must be a list
+    Queue Rule Schema    group       __self__       invalid             group 0 must be a mapping
+    Queue Rule Schema    group       name           __remove__          group 0 must have a non-empty string name
+    Queue Rule Schema    group       name           ${42}               group 0 must have a non-empty string name
+    Queue Rule Schema    group       rules          __remove__          must have a rules list
+    Queue Rule Schema    group       rules          invalid             must have a rules list
+    Queue Rule Schema    group       labels         invalid             labels must be a mapping
+    Queue Rule Schema    rule        __self__       invalid             rule 0 must be a mapping
+    Queue Rule Schema    rule        alert          __remove__          must have a non-empty string 'alert' field
+    Queue Rule Schema    rule        alert          ${SPACE}            must have a non-empty string 'alert' field
+    Queue Rule Schema    rule        alert          ${42}               must have a non-empty string 'alert' field
+    Queue Rule Schema    rule        expr           __remove__          must have a non-empty string 'expr' field
+    Queue Rule Schema    rule        expr           ${EMPTY}            must have a non-empty string 'expr' field
+    Queue Rule Schema    rule        expr           ${42}               must have a non-empty string 'expr' field
+    Queue Rule Schema    rule        record         saved_up            is a recording rule; only alerts are supported
+    Queue Rule Schema    rule        labels         invalid             labels must be a mapping
+    Queue Rule Schema    rule        annotations    invalid             annotations must be a mapping
+    Check Rejected Rule Batch
 
 Single Recording Rules Are Rejected
     ${document} =    Single Alert Rule Document
@@ -358,10 +361,10 @@ Single Recording Rules Are Rejected
     Rule Payload Should Be Rejected    ${payload}    recording rules are not supported
 
 Reserved Duplicate And Blank Group Names Are Rejected
-    [Template]    Local Group Names Should Be Rejected
-    uses the reserved 'ns8:' prefix          ns8:reserved
-    duplicate local group name 'repeated'    repeated    ${SPACE}repeated${SPACE}
-    must have a non-empty string name        ${SPACE * 3}
+    Queue Local Group Names    uses the reserved 'ns8:' prefix          ns8:reserved
+    Queue Local Group Names    duplicate local group name 'repeated'    repeated    ${SPACE}repeated${SPACE}
+    Queue Local Group Names    must have a non-empty string name        ${SPACE * 3}
+    Check Rejected Rule Batch
 
 Group Names Are Stable After Reordering
     ${document} =    Full Alert Rule Document    availability    capacity
@@ -417,52 +420,52 @@ Group Names Distinguish Publishers Rule Sets And Payload Formats
     Length Should Be    ${seen}    8
 
 Group And Rule Identity Conflicts Are Reported Precisely
-    [Template]    Rule Identity Should Be Enforced
-    another1               another2               ${True}
-    ${RULE_PUBLISHER_A}     ${RULE_PUBLISHER_A}     ${False}
+    Queue Rule Identity    another1               another2               ${True}
+    Queue Rule Identity    ${RULE_PUBLISHER_A}     ${RULE_PUBLISHER_A}     ${False}
+    Check Successful Rule Batch
 
 Authored Metadata Is Retained With Specific Warnings
-    [Template]    Rule Metadata Should Be Retained
-    severity       info
-    annotations    summary_en
+    Queue Rule Metadata    severity       info
+    Queue Rule Metadata    annotations    summary_en
+    Check Successful Rule Batch
 
 PromQL Selector Shapes Are Scoped By The Real Parser
-    [Template]    PromQL Should Be Scoped
-    -up == -1                           -up{module_id="${RULE_PUBLISHER_A}"} == -1
-    ${SPACE * 2}-up == -1                -up{module_id="${RULE_PUBLISHER_A}"} == -1
-    rate(requests_total[5m]) > 1         rate(requests_total{module_id="${RULE_PUBLISHER_A}"}[5m]) > 1
-    max(sum(rate(requests_total[5m]))) > 1    max(sum(rate(requests_total{module_id="${RULE_PUBLISHER_A}"}[5m]))) > 1
-    errors_total / requests_total       errors_total{module_id="${RULE_PUBLISHER_A}"} / requests_total{module_id="${RULE_PUBLISHER_A}"}
-    sum by (node) (up)                  sum by (node) (up{module_id="${RULE_PUBLISHER_A}"})
-    absent(up)                          absent(up{module_id="${RULE_PUBLISHER_A}"})
-    absent_over_time(up[5m])             absent_over_time(up{module_id="${RULE_PUBLISHER_A}"}[5m])
+    Queue Scoped PromQL    -up == -1                           -up{module_id="${RULE_PUBLISHER_A}"} == -1
+    Queue Scoped PromQL    ${SPACE * 2}-up == -1                -up{module_id="${RULE_PUBLISHER_A}"} == -1
+    Queue Scoped PromQL    rate(requests_total[5m]) > 1         rate(requests_total{module_id="${RULE_PUBLISHER_A}"}[5m]) > 1
+    Queue Scoped PromQL    max(sum(rate(requests_total[5m]))) > 1    max(sum(rate(requests_total{module_id="${RULE_PUBLISHER_A}"}[5m]))) > 1
+    Queue Scoped PromQL    errors_total / requests_total       errors_total{module_id="${RULE_PUBLISHER_A}"} / requests_total{module_id="${RULE_PUBLISHER_A}"}
+    Queue Scoped PromQL    sum by (node) (up)                  sum by (node) (up{module_id="${RULE_PUBLISHER_A}"})
+    Queue Scoped PromQL    absent(up)                          absent(up{module_id="${RULE_PUBLISHER_A}"})
+    Queue Scoped PromQL    absent_over_time(up[5m])             absent_over_time(up{module_id="${RULE_PUBLISHER_A}"}[5m])
+    Check Scoped PromQL Batch
 
 Authored Module Matchers Are Scoped Independently On Every Selector
-    [Template]    PromQL Should Be Scoped
-    up{module_id="${RULE_PUBLISHER_A}"}       up{module_id="${RULE_PUBLISHER_A}"}
-    count({module_id="${RULE_PUBLISHER_A}"})    count({module_id="${RULE_PUBLISHER_A}"})
-    count({module_id=~".+"})                 count({module_id="${RULE_PUBLISHER_A}"})    ${True}
-    up{module_id="other1"}                   up{module_id="${RULE_PUBLISHER_A}"}    ${True}
-    up{module_id=~"metrics.*"}                up{module_id="${RULE_PUBLISHER_A}"}    ${True}
-    up{module_id!="other1"}                   up{module_id="${RULE_PUBLISHER_A}"}    ${True}
-    up{module_id!~"metrics.*"}                up{module_id="${RULE_PUBLISHER_A}"}    ${True}
-    up{module_id="${RULE_PUBLISHER_A}"} + errors_total    up{module_id="${RULE_PUBLISHER_A}"} + errors_total{module_id="${RULE_PUBLISHER_A}"}    ${True}
-    up{module_id="${RULE_PUBLISHER_A}"} + errors_total{module_id="other1"}    up{module_id="${RULE_PUBLISHER_A}"} + errors_total{module_id="${RULE_PUBLISHER_A}"}    ${True}
+    Queue Scoped PromQL    up{module_id="${RULE_PUBLISHER_A}"}       up{module_id="${RULE_PUBLISHER_A}"}
+    Queue Scoped PromQL    count({module_id="${RULE_PUBLISHER_A}"})    count({module_id="${RULE_PUBLISHER_A}"})
+    Queue Scoped PromQL    count({module_id=~".+"})                 count({module_id="${RULE_PUBLISHER_A}"})    ${True}
+    Queue Scoped PromQL    up{module_id="other1"}                   up{module_id="${RULE_PUBLISHER_A}"}    ${True}
+    Queue Scoped PromQL    up{module_id=~"metrics.*"}                up{module_id="${RULE_PUBLISHER_A}"}    ${True}
+    Queue Scoped PromQL    up{module_id!="other1"}                   up{module_id="${RULE_PUBLISHER_A}"}    ${True}
+    Queue Scoped PromQL    up{module_id!~"metrics.*"}                up{module_id="${RULE_PUBLISHER_A}"}    ${True}
+    Queue Scoped PromQL    up{module_id="${RULE_PUBLISHER_A}"} + errors_total    up{module_id="${RULE_PUBLISHER_A}"} + errors_total{module_id="${RULE_PUBLISHER_A}"}    ${True}
+    Queue Scoped PromQL    up{module_id="${RULE_PUBLISHER_A}"} + errors_total{module_id="other1"}    up{module_id="${RULE_PUBLISHER_A}"} + errors_total{module_id="${RULE_PUBLISHER_A}"}    ${True}
+    Check Scoped PromQL Batch
 
 Authored Temporary Label Lookalikes Survive Rewriting
-    [Template]    PromQL Should Be Scoped
-    up{__ns8_rule_scope="authored"}    up{__ns8_rule_scope="authored",module_id="${RULE_PUBLISHER_A}"}
-    up{__ns8_rule_scope="authored",__ns8_rule_scope_="also authored"}    up{__ns8_rule_scope="authored",__ns8_rule_scope_="also authored",module_id="${RULE_PUBLISHER_A}"}
-    up{job="__ns8_rule_scope"}    up{job="__ns8_rule_scope",module_id="${RULE_PUBLISHER_A}"}
+    Queue Scoped PromQL    up{__ns8_rule_scope="authored"}    up{__ns8_rule_scope="authored",module_id="${RULE_PUBLISHER_A}"}
+    Queue Scoped PromQL    up{__ns8_rule_scope="authored",__ns8_rule_scope_="also authored"}    up{__ns8_rule_scope="authored",__ns8_rule_scope_="also authored",module_id="${RULE_PUBLISHER_A}"}
+    Queue Scoped PromQL    up{job="__ns8_rule_scope"}    up{job="__ns8_rule_scope",module_id="${RULE_PUBLISHER_A}"}
+    Check Scoped PromQL Batch
 
 Selector-Free And Invalid PromQL Are Rejected Independently
-    [Template]    PromQL Should Be Rejected
-    vector(1)    no vector or range selector
-    1 + 2        no vector or range selector
-    up{          parse error
+    Queue Rejected PromQL    vector(1)    no vector or range selector
+    Queue Rejected PromQL    1 + 2        no vector or range selector
+    Queue Rejected PromQL    up{          parse error
     # Promtool v3.5.3 panics when deleting two matchers for the same label.
     # Provisioning must reject that source and still load its valid neighbours.
-    count({module_id="x",module_id!="y"})    panic: runtime error: slice bounds out of range
+    Queue Rejected PromQL    count({module_id="x",module_id!="y"})    panic: runtime error: slice bounds out of range
+    Check Rejected Rule Batch
 
 Colliding Rule Filenames Reject Both Sources
     ${first} =    Single Alert Rule Payload    Phase5CollisionFirst    up == 0
@@ -511,7 +514,7 @@ Maximum Length Rule Filename Installs Independently Of An Overlong Name
     Provider Rule File Should Exist    ${RULE_PUBLISHER_A}    ${field}
     Provider Rule File Should Be Absent    ${RULE_PUBLISHER_A}    ${field}x
     Prometheus Rule Count Should Be    Phase5MaximumFilename    1
-    Source Journal Should Contain    ${cursor}    field '${field}x'    generated rule filename exceeds 255 bytes
+    Source Journal Should Contain    ${cursor}    module/${RULE_PUBLISHER_A}/metrics_alert_rules field '${field}x'    generated rule filename exceeds 255 bytes
 
 Valid And Invalid Updates Within One Publisher Are Independent
     ${first} =    Single Alert Rule Payload    Phase5RetainedWithinPublisher    up == 0
@@ -532,7 +535,7 @@ Valid And Invalid Updates Within One Publisher Are Independent
     Prometheus Rule Should Exist    Phase5RetainedWithinPublisher
     Prometheus Rule Should Exist    Phase5UpdatedWithinPublisher
     Prometheus Rule Should Be Absent    Phase5ReplacedWithinPublisher
-    Source Journal Should Contain    ${cursor}    field '${PRIMARY_RULE_FIELD}'    invalid YAML
+    Source Journal Should Contain    ${cursor}    module/${RULE_PUBLISHER_A}/metrics_alert_rules field '${PRIMARY_RULE_FIELD}'    invalid YAML
 
 Source Removal Cleans Orphans And Preserves Built-In And Legacy Files
     ${legacy} =    Single Alert Rule Payload    Phase5LegacyCustom    up == 0
