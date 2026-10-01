@@ -10,6 +10,7 @@
 # and Alertmanager forgets them when 80services restarts it. Resolve
 # them through alert-proxy while the old Alertmanager still runs.
 
+import datetime
 import json
 import sys
 import urllib.request
@@ -23,8 +24,16 @@ except Exception as ex:
     print(f"Cannot read Alertmanager alerts, skipping: {ex}", file=sys.stderr)
     sys.exit(0)
 
+# Match a real Alertmanager webhook: alert-proxy forwards it to Mimir as is.
+now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 stale = [
-    {'status': 'resolved', 'labels': alert['labels'], 'annotations': alert.get('annotations', {})}
+    {
+        'status': 'resolved',
+        'labels': alert['labels'],
+        'annotations': alert.get('annotations', {}),
+        'startsAt': alert.get('startsAt', now),
+        'endsAt': now,
+    }
     for alert in active
     if alert.get('labels', {}).get('alertname') in CERT_ALERTS and 'node' not in alert['labels']
 ]
@@ -36,8 +45,10 @@ request = urllib.request.Request(
     data=json.dumps({'status': 'resolved', 'alerts': stale}).encode(),
     headers={'Content-Type': 'application/json'},
 )
+# alert-proxy answers once every alert is sent, and each send to my can
+# retry for about 5 minutes. Stopping early lets 80services kill it.
 try:
-    urllib.request.urlopen(request, timeout=90).close()
+    urllib.request.urlopen(request, timeout=600).close()
     print(f"Resolved {len(stale)} certificate alerts without node label", file=sys.stderr)
 except Exception as ex:
     print(f"Cannot resolve certificate alerts, skipping: {ex}", file=sys.stderr)
