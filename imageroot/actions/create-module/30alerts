@@ -153,19 +153,20 @@ with open('rules.d/tlscert.yml', 'w') as f:
   rules:
   # Traefik keeps exposing replaced certificates until it restarts
   # (traefik/traefik#8606). Drop a series when a later one on the same
-  # instance shares its CN or its SANs.
+  # instance shares its CN or its SANs. An empty CN or SANs is not shared,
+  # or every certificate without one would hide the others.
   - record: ns8:traefik_tls_cert_not_after
     expr: |
       max by (node, module_id, cn, sans) (
         traefik_tls_certs_not_after
         unless (
-            traefik_tls_certs_not_after
+            traefik_tls_certs_not_after{cn!=""}
               < on (node, module_id, cn) group_left
-            max by (node, module_id, cn) (traefik_tls_certs_not_after)
+            max by (node, module_id, cn) (traefik_tls_certs_not_after{cn!=""})
           or
-            traefik_tls_certs_not_after
+            traefik_tls_certs_not_after{sans!=""}
               < on (node, module_id, sans) group_left
-            max by (node, module_id, sans) (traefik_tls_certs_not_after)
+            max by (node, module_id, sans) (traefik_tls_certs_not_after{sans!=""})
         )
       )
 
