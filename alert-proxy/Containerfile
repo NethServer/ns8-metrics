@@ -1,5 +1,0 @@
-FROM python:3.13.15-alpine
-WORKDIR /
-RUN pip install --no-cache-dir aiohttp
-COPY alert-proxy .
-CMD [ "python", "./alert-proxy" ]

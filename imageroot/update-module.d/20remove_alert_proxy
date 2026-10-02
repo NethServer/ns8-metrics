@@ -1,0 +1,22 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# alert-proxy is gone: remove what the old release left. Run every step
+# on each update and tolerate missing targets, so that a later update
+# completes a cleanup that an earlier one left half done.
+
+# The unit file is gone, so stopping it does not stop the container
+systemctl --user stop alert-proxy.service 2>/dev/null || :
+podman rm --force --ignore --time 10 alert-proxy
+# extract-image removes the unit file, but not its enable link
+rm -f alert-proxy.env ../systemd/user/default.target.wants/alert-proxy.service
+systemctl --user daemon-reload
+systemctl --user reset-failed alert-proxy.service 2>/dev/null || :
+
+# update-module does not remove images missing from the label
+[ -n "$ALERT_PROXY_IMAGE" ] && podman image rm --ignore "$ALERT_PROXY_IMAGE"
+python3 -c 'import agent; agent.unset_env("ALERT_PROXY_IMAGE")'
