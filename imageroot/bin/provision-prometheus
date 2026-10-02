@@ -8,6 +8,7 @@
 import json
 import os
 import sys
+import urllib.parse
 from collections.abc import Mapping
 
 import agent
@@ -38,35 +39,48 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
         'equal': ['alertname', 'module_id']
         }
     ],
-    'receivers': [
-        {
-        'name': 'default-receiver',
-        'webhook_configs': [
-            {
-            'url': 'http://localhost:9095',
-            'send_resolved': True
-            }
-        ]
-        }
-    ],
+    'receivers': [{'name': 'default-receiver'}],
     'templates': ["/etc/alertmanager/templates/*.tmpl"]
 }
 
+# Prometheus adds /api/v2/alerts to this path
+MIMIR_ALERTMANAGER_PATH = '/collect/api/services/mimir/alertmanager'
+
+def mimir_alertmanager_config(subscription):
+    """Return the my Mimir alertmanager entry, or None."""
+    # Only enterprise clusters send alerts to my
+    if subscription.get('provider') != 'nsent':
+        return None
+    # collect_url is <base>/collect/api/systems
+    url = urllib.parse.urlsplit(subscription['collect_url'])
+    port = url.port or (443 if url.scheme == 'https' else 80)
+    return {
+        'scheme': url.scheme,
+        'path_prefix': url.path.split('/collect/')[0] + MIMIR_ALERTMANAGER_PATH,
+        'basic_auth': {'username': subscription['system_id'], 'password': subscription['auth_token']},
+        'static_configs': [{'targets': [f'{url.hostname}:{port}']}],
+    }
+
 def generate_prometheus_config(redis_client):
+    # Each alert goes to every Alertmanager in this list
+    alertmanagers = [{'static_configs': [{'targets': ['localhost:9093']}]}]
+    mimir = mimir_alertmanager_config(redis_client.hgetall('cluster/subscription'))
+    if mimir:
+        alertmanagers.append(mimir)
+        # Do not log the password
+        target = mimir['static_configs'][0]['targets'][0]
+        print(f"Sending alerts also to my Mimir at {mimir['scheme']}://{target}{mimir['path_prefix']}", file=sys.stderr)
+    config = {
+        'global': {},
+        'scrape_configs': [{
+            'job_name': 'providers',
+            'file_sd_configs': [{'files': ['/prometheus/prometheus.d/*.yml']}],
+        }],
+        'alerting': {'alertmanagers': alertmanagers},
+        'rule_files': ['/prometheus/rules.d/*.yml'],
+    }
     with open('prometheus.yml', 'w', encoding='utf-8') as fp:
-        fp.write("global:\n")
-        fp.write("scrape_configs:\n")
-        fp.write('  - job_name: "providers"\n')
-        fp.write('    file_sd_configs:\n')
-        fp.write('      - files:\n')
-        fp.write('        - "/prometheus/prometheus.d/*.yml"\n')
-        fp.write('alerting:\n')
-        fp.write('  alertmanagers:\n')
-        fp.write('    - static_configs:\n')
-        fp.write('      - targets:\n')
-        fp.write('        - localhost:9093\n')
-        fp.write('rule_files:\n')
-        fp.write('  - "/prometheus/rules.d/*.yml"\n')
+        yaml.safe_dump(config, fp, sort_keys=False)
 
 def validate_and_generate_provider_configs(redis_client):
     for nkey in redis_client.scan_iter("node/*/vpn"):

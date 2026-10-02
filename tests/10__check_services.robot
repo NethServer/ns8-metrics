@@ -15,10 +15,6 @@ Check if alertmanager is running
     Wait Until Keyword Succeeds    10    1s
     ...    HTTP GET has status 200    http://127.0.0.1:9093/
 
-Check if alert-proxy is running
-    Wait Until Keyword Succeeds    10    1s
-    ...    HTTP GET has status 200    http://127.0.0.1:9095/
-
 Check if module can be configured
     ${rc} =    Execute Command    api-cli run module/${MID}/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana"}'
     ...    return_rc=True  return_stdout=False
