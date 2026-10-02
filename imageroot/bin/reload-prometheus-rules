@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+import os
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
+
+
+PROMETHEUS_ORIGIN = "http://127.0.0.1:9091"
+PROMETHEUS_SERVICE = "prometheus.service"
+RELOAD_TIMEOUT_SECONDS = 30
+POLL_INTERVAL_SECONDS = 1
+HTTP_TIMEOUT_SECONDS = 5
+
+
+class RuleReloadError(RuntimeError):
+    """Provisioning or verified Prometheus activation failed."""
+
+
+@dataclass(frozen=True)
+class ReloadState:
+    successful: float | None
+    timestamp: float | None
+
+
+def prometheus_base_url(prometheus_path=None):
+    if prometheus_path is None:
+        prometheus_path = os.environ.get("PROMETHEUS_PATH", "")
+    normalized_path = str(prometheus_path).strip("/")
+    if not normalized_path:
+        return PROMETHEUS_ORIGIN
+    return PROMETHEUS_ORIGIN + "/" + urllib.parse.quote(
+        normalized_path, safe="/"
+    )
+
+
+class PrometheusClient:
+    def __init__(
+        self,
+        base_url=None,
+        opener=urllib.request.urlopen,
+        timeout=HTTP_TIMEOUT_SECONDS,
+    ):
+        self.base_url = (base_url or prometheus_base_url()).rstrip("/")
+        self.opener = opener
+        self.timeout = timeout
+
+    def reload_state(self):
+        request = urllib.request.Request(
+            self.base_url + "/metrics",
+            headers={"Accept": "text/plain"},
+        )
+        try:
+            with self.opener(request, timeout=self.timeout) as response:
+                payload = response.read().decode("utf-8")
+        except Exception as ex:
+            raise RuleReloadError(
+                f"cannot read Prometheus reload metrics: {ex}"
+            ) from ex
+        return parse_reload_metrics(payload)
+
+
+def parse_reload_metrics(payload):
+    values = {}
+    wanted = {
+        "prometheus_config_last_reload_successful",
+        "prometheus_config_last_reload_success_timestamp_seconds",
+    }
+    for line in payload.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        fields = stripped.split()
+        if len(fields) < 2:
+            continue
+        metric_name = fields[0].split("{", 1)[0]
+        if metric_name not in wanted:
+            continue
+        try:
+            values[metric_name] = float(fields[1])
+        except ValueError:
+            continue
+    return ReloadState(
+        successful=values.get("prometheus_config_last_reload_successful"),
+        timestamp=values.get(
+            "prometheus_config_last_reload_success_timestamp_seconds"
+        ),
+    )
+
+
+def _execute(command, executor):
+    try:
+        return executor(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            shell=False,
+        )
+    except OSError as ex:
+        raise RuleReloadError(f"cannot execute {command[0]}: {ex}") from ex
+
+
+def _run_required(command, action, executor):
+    result = _execute(command, executor)
+    if result.returncode != 0:
+        detail = (result.stdout or "").strip()
+        if detail:
+            raise RuleReloadError(f"{action} failed: {detail}")
+        raise RuleReloadError(
+            f"{action} failed with status {result.returncode}"
+        )
+    return result
+
+
+def _service_is_active(executor):
+    result = _execute(
+        [
+            "/usr/bin/systemctl",
+            "--user",
+            "--quiet",
+            "is-active",
+            PROMETHEUS_SERVICE,
+        ],
+        executor,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 3:
+        return False
+    detail = (result.stdout or "").strip()
+    raise RuleReloadError(
+        "cannot determine whether Prometheus is active"
+        + (f": {detail}" if detail else "")
+    )
+
+
+def _wait_for_verified_load(
+    client,
+    previous_timestamp,
+    timeout,
+    poll_interval,
+    monotonic,
+    sleep,
+):
+    deadline = monotonic() + timeout
+    last_problem = "reload metrics did not report success"
+    while True:
+        try:
+            state = client.reload_state()
+        except Exception as ex:
+            last_problem = str(ex)
+        else:
+            timestamp_advanced = (
+                previous_timestamp is None
+                or (
+                    state.timestamp is not None
+                    and state.timestamp > previous_timestamp
+                )
+            )
+            if state.successful == 1 and timestamp_advanced:
+                return True, None
+            if state.successful != 1:
+                last_problem = "reload-success metric is not 1"
+            elif state.timestamp is None:
+                last_problem = "reload-success timestamp is missing"
+            else:
+                last_problem = "reload-success timestamp did not advance"
+
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return False, last_problem
+        sleep(min(poll_interval, remaining))
+
+
+def _stderr_warning(message):
+    print(message, file=sys.stderr)
+
+
+def reload_prometheus_rules(
+    executor=subprocess.run,
+    client=None,
+    warning=None,
+    timeout=RELOAD_TIMEOUT_SECONDS,
+    poll_interval=POLL_INTERVAL_SECONDS,
+    monotonic=time.monotonic,
+    sleep=time.sleep,
+):
+    if warning is None:
+        warning = _stderr_warning
+    if client is None:
+        client = PrometheusClient()
+
+    provision_result = _run_required(
+        ["provision-prometheus"],
+        "Prometheus provisioning",
+        executor,
+    )
+    for line in (provision_result.stdout or "").splitlines():
+        if line:
+            warning(line)
+    if not _service_is_active(executor):
+        return "inactive"
+
+    try:
+        previous_timestamp = client.reload_state().timestamp
+    except Exception as ex:
+        previous_timestamp = None
+        warning(
+            "Warning: cannot establish the pre-reload Prometheus timestamp; "
+            f"using restart fallback: {ex}"
+        )
+    else:
+        if previous_timestamp is None:
+            warning(
+                "Warning: pre-reload Prometheus timestamp is missing; "
+                "using restart fallback"
+            )
+
+    reload_verified = False
+    reload_problem = None
+    if previous_timestamp is not None:
+        reload_result = _execute(
+            [
+                "/usr/bin/systemctl",
+                "--user",
+                "reload",
+                PROMETHEUS_SERVICE,
+            ],
+            executor,
+        )
+        if reload_result.returncode == 0:
+            reload_verified, reload_problem = _wait_for_verified_load(
+                client,
+                previous_timestamp,
+                timeout,
+                poll_interval,
+                monotonic,
+                sleep,
+            )
+        else:
+            reload_problem = (reload_result.stdout or "").strip() or (
+                f"systemd reload exited with status {reload_result.returncode}"
+            )
+
+    if reload_verified:
+        return "reloaded"
+
+    if reload_problem:
+        warning(
+            "Warning: Prometheus reload was not verified; using restart "
+            f"fallback: {reload_problem}"
+        )
+    _run_required(
+        [
+            "/usr/bin/systemctl",
+            "--user",
+            "try-restart",
+            PROMETHEUS_SERVICE,
+        ],
+        "Prometheus restart fallback",
+        executor,
+    )
+    restart_verified, restart_problem = _wait_for_verified_load(
+        client,
+        previous_timestamp,
+        timeout,
+        poll_interval,
+        monotonic,
+        sleep,
+    )
+    if not restart_verified:
+        raise RuleReloadError(
+            "Prometheus restart fallback could not be verified: "
+            f"{restart_problem}"
+        )
+    return "restarted"
+
+
+def main():
+    try:
+        reload_prometheus_rules()
+    except RuleReloadError as ex:
+        print(f"Error: {ex}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
