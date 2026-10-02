@@ -5,6 +5,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+[[ -e ../systemd/user/default.target.wants/alert-proxy.service ]] || [[ -e alert-proxy.env ]] || exit 0
+
 # alert-proxy is gone: remove what the old release left. Run every step
 # on each update and tolerate missing targets, so that a later update
 # completes a cleanup that an earlier one left half done.
