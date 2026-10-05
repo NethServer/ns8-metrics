@@ -151,10 +151,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
     f.write(r'''groups:
 - name: TLS certificates
   rules:
-  # Traefik keeps exposing replaced certificates until it restarts
-  # (traefik/traefik#8606). Drop a series when a later one on the same
-  # instance shares its CN or its SANs. An empty CN or SANs is not shared,
-  # or every certificate without one would hide the others.
+  # Workaround for traefik/traefik#8606
   - record: ns8:traefik_tls_cert_not_after
     expr: |
       max by (node, module_id, cn, sans) (
