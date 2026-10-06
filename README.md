@@ -8,7 +8,6 @@ It is composed by the following services:
 - [Prometheus](https://prometheus.io/)
 - [Alertmanager](https://prometheus.io/docs/alerting/alertmanager/)
 - [Grafana](https://grafana.com/)
-- [alert-proxy](alert-proxy/README.md)
 
 Behavior:
 
@@ -17,13 +16,11 @@ Behavior:
 - if a leader node becomes a worker, the module is automatically removed on the worker node
 - Prometheus listens on well-known port 9091 (standard port is 9090, but it has been changed to avoid conflicts with Cockpit)
 - Alertmanager listens on well-known port 9093
-- alert-proxy listens on well-known port 9095
 - Grafana is disabled by default, if a Traefik route is configured Grafana will be run on the well-known port 3000
 
 The configuration for Prometheus and Alertmanager is created when Prometheus service is restarted.
 The module is restarted when a new node is added or removed from the cluster.
-The alert-proxy service is restarted during a subscription-change event: if there is a valid subscription, the service will start
-sending alerts to my.nethesis.it or my.nethserver.com.
+Prometheus is restarted during a subscription-changed event, to update the my alert target.
 
 Available alerts:
 - no SWAP is configured
@@ -68,22 +65,17 @@ Configuration files are saved inside the state directory. The most important fil
 
 ### Forwarding alerts to my.nethesis.it
 
-Enterprise (`nsent`) clusters with a valid my.nethesis.it subscription forward
-their alerts automatically, mirroring `send-heartbeat` / `send-inventory` in
-ns8-core. The alert-proxy POSTs alerts to the credential-translation proxy at
-`https://my.nethesis.it/proxy/alerts` using the existing subscription
-credentials (`system_id` / `auth_token`), which the proxy maps to the new my
-credentials before forwarding them to the Mimir alertmanager. No extra
-configuration is required: `write-alert-proxy-envfile` derives everything from
-`cluster/subscription`.
+Prometheus sends every alert to the local Alertmanager, which sends mail
+and feeds the cluster alert list.
 
-Community (`nscom`) clusters keep sending alerts to dartagnan
-(my.nethserver.com) and are unaffected.
+Enterprise (`nsent`) clusters also send alerts to the my Mimir
+alertmanager. Its URL and credentials are read from the
+`cluster/subscription` key in Redis: the URL is derived from
+`collect_url`, and login uses `system_id` and `auth_token`. No extra
+configuration is needed.
 
-> Migration note: the my switch-off release will repoint this from
-> `/proxy/alerts` to the native collect endpoint
-> (`/collect/api/services/mimir/alertmanager/api/v2/alerts`) with rotated
-> credentials.
+Community (`nscom`) clusters do not forward alerts. Alerts sent straight to
+the local Alertmanager, like `test-alert`, are not forwarded.
 
 ### Customimze alert rules (experimental)
 

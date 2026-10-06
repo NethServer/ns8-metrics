@@ -6,5 +6,4 @@
 #
 
 # reload the subscription configuration
-write-alert-proxy-envfile
-systemctl --user restart alert-proxy.service
+systemctl --user try-restart prometheus.service
