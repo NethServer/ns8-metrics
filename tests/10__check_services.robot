@@ -24,6 +24,16 @@ Check if grafana is running
     Wait Until Keyword Succeeds    10    1s
     ...    HTTP GET has status 200    http://127.0.0.1:3000/grafana/login
 
+Check if Prometheus is the default Grafana datasource after a restart
+    # Grafana sets a default datasource by itself only on the first start
+    ${rc} =    Execute Command    runagent -m ${MID} systemctl --user restart grafana.service
+    ...    return_rc=True    return_stdout=False
+    Should Be Equal As Integers    ${rc}    0
+    Wait Until Keyword Succeeds    30    1s
+    ...    HTTP GET has status 200    http://127.0.0.1:3000/grafana/api/health
+    ${uid} =    Execute Command    curl -sf -H 'X-AUTH-USER: admin' http://127.0.0.1:3000/grafana/api/datasources | jq -r '.[] | select(.isDefault) | .uid'
+    Should Be Equal    ${uid}    prometheus
+
 Check if Grafana is accessible from Traefik with basic auth
     Wait Until Keyword Succeeds    30    1s
     ...     HTTP-Basic authentication accepted    https://127.0.0.1/grafana/    admin:Nethesis,1234

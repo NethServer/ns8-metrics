@@ -55,6 +55,9 @@ with open('datasources/local.yml', 'w') as fp:
     fp.write('  - name: Local Promethus\n')
     fp.write('    type: prometheus\n')
     fp.write('    uid: prometheus\n')
+    # Without the flag, Grafana makes the first datasource the default
+    # only on the first start, and clears it on the next ones
+    fp.write('    isDefault: true\n')
     fp.write('    access: proxy\n')
     fp.write(f'    url: http://127.0.0.1:9091/{prometheus_path}\n')
     fp.write('    jsonData:\n')
@@ -99,6 +102,11 @@ for module in rdb.scan_iter("module/*/metrics_datasources"):
         except Exception as ex:
             print(f"Skipped datasource {ds_key} for {module_id}: {ex}", file=sys.stderr)
             continue
+        # Grafana does not start with two default datasources
+        if isinstance(data, dict):
+            for ds in data.get('datasources') or []:
+                if isinstance(ds, dict):
+                    ds.pop('isDefault', None)
         # write out as YAML without sorting keys
         filename = f"datasources/provision_{module_id}_{ds_key}.yml"
         with open(filename, 'w') as fp:
