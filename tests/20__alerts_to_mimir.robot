@@ -31,6 +31,13 @@ Check Prometheus uses only the local Alertmanager without subscription
     Wait Until Keyword Succeeds    60s    2s
     ...    Active Alertmanagers Should Be    ${LOCAL_AM}
 
+Check Prometheus starts with a subscription not migrated to my
+    # Before migrate-to-my the subscription has no collect_url
+    Execute Command    redis-cli HSET cluster/subscription provider nsent system_id ${FAKE_SYSTEM} auth_token ${FAKE_TOKEN}
+    Run The Subscription Handler
+    Wait Until Keyword Succeeds    60s    2s
+    ...    Active Alertmanagers Should Be    ${LOCAL_AM}
+
 Check Prometheus also uses Mimir with an enterprise subscription
     Execute Command    redis-cli HSET cluster/subscription provider nsent system_id ${FAKE_SYSTEM} auth_token ${FAKE_TOKEN} collect_url https://mimir.invalid/collect/api/systems
     Run The Subscription Handler
