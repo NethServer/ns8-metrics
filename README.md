@@ -343,6 +343,39 @@ datasources:
     timescaledb: false
 ```
 
+### Extra Grafana container options
+
+The `PODMAN_RUN_OPTS` environment variable adds options to the `podman
+run` command of the Grafana container. It is empty by default.
+
+The value is split on spaces, so each option must not contain spaces.
+Setting the variable replaces its previous value: put all the required
+options in a single value.
+
+#### Disable telemetry
+
+The checks for Grafana and plugin updates on `grafana.com` are
+disabled by default.
+
+Grafana still periodically sends anonymous usage statistics to
+`stats.grafana.org`. If the requests are blocked (e.g. by a DNS filter
+like Pi-hole) they may generate many DNS queries.
+
+To disable the usage reporting, pass the corresponding Grafana setting
+as environment variable:
+
+```bash
+runagent -m metrics1 python3 -c 'import agent ; agent.set_env("PODMAN_RUN_OPTS", "-e GF_ANALYTICS_REPORTING_ENABLED=false")'
+runagent -m metrics1 systemctl --user restart grafana.service
+```
+
+To revert to the defaults, remove the variable:
+
+```bash
+runagent -m metrics1 python3 -c 'import agent ; agent.unset_env("PODMAN_RUN_OPTS")'
+runagent -m metrics1 systemctl --user restart grafana.service
+```
+
 ## Testing
 
 Test the module using the `test-module.sh` script:
