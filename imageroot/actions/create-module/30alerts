@@ -151,8 +151,24 @@ with open('rules.d/tlscert.yml', 'w') as f:
     f.write(r'''groups:
 - name: TLS certificates
   rules:
+  # Workaround for traefik/traefik#8606
+  - record: ns8:traefik_tls_cert_not_after
+    expr: |
+      max by (node, module_id, cn, sans) (
+        traefik_tls_certs_not_after
+        unless (
+            traefik_tls_certs_not_after{cn!=""}
+              < on (node, module_id, cn) group_left
+            max by (node, module_id, cn) (traefik_tls_certs_not_after{cn!=""})
+          or
+            traefik_tls_certs_not_after{sans!=""}
+              < on (node, module_id, sans) group_left
+            max by (node, module_id, sans) (traefik_tls_certs_not_after{sans!=""})
+        )
+      )
+
   - alert: CertExpiringSoon
-    expr: 7d <= (max by (cn, sans) (traefik_tls_certs_not_after) - time()) < 28d
+    expr: 7d <= (ns8:traefik_tls_cert_not_after - time()) < 28d
     for: 5m
     labels:
       severity: warning
@@ -163,7 +179,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
       description_it: "Il certificato {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} scade tra meno di 28 giorni. Deve essere rinnovato o rimosso dalla pagina dei certificati TLS."
   
   - alert: CertExpiringCritical
-    expr: 0 < (max by (cn, sans) (traefik_tls_certs_not_after) - time()) < 7d
+    expr: 0 < (ns8:traefik_tls_cert_not_after - time()) < 7d
     for: 5m
     labels:
       severity: critical
@@ -174,7 +190,7 @@ with open('rules.d/tlscert.yml', 'w') as f:
       description_it: "Il certificato {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} scade tra meno di 7 giorni. Deve essere rinnovato immediatamente o rimosso dalla pagina dei certificati TLS."
   
   - alert: CertExpired
-    expr: (time() - max by (cn, sans) (traefik_tls_certs_not_after)) > 0
+    expr: (time() - ns8:traefik_tls_cert_not_after) > 0
     for: 5m
     labels:
       severity: critical
