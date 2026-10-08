@@ -354,16 +354,18 @@ options in a single value.
 
 #### Disable telemetry
 
-Grafana periodically sends anonymous usage statistics to
-`stats.grafana.org` and checks `grafana.com` for Grafana and plugin
-updates. If the requests are blocked (e.g. by a DNS filter like
-Pi-hole) they may generate many DNS queries.
+The checks for Grafana and plugin updates on `grafana.com` are
+disabled by default.
 
-To disable them, pass the corresponding Grafana settings as
-environment variables:
+Grafana still periodically sends anonymous usage statistics to
+`stats.grafana.org`. If the requests are blocked (e.g. by a DNS filter
+like Pi-hole) they may generate many DNS queries.
+
+To disable the usage reporting, pass the corresponding Grafana setting
+as environment variable:
 
 ```bash
-runagent -m metrics1 python3 -c 'import agent ; agent.set_env("PODMAN_RUN_OPTS", "-e GF_ANALYTICS_REPORTING_ENABLED=false -e GF_ANALYTICS_CHECK_FOR_UPDATES=false -e GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false")'
+runagent -m metrics1 python3 -c 'import agent ; agent.set_env("PODMAN_RUN_OPTS", "-e GF_ANALYTICS_REPORTING_ENABLED=false")'
 runagent -m metrics1 systemctl --user restart grafana.service
 ```
 

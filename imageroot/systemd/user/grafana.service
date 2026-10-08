@@ -27,6 +27,8 @@ ExecStart=/usr/bin/podman run \
     -e GF_SERVER_SERVE_FROM_SUB_PATH=true \
     -e GF_SERVER_ROOT_URL=/${GRAFANA_PATH} \
     -e GF_SERVER_ADDR=127.0.0.1 \
+    -e GF_ANALYTICS_CHECK_FOR_UPDATES=false \
+    -e GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false \
     $PODMAN_RUN_OPTS \
     ${GRAFANA_IMAGE}
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/grafana.ctr-id -t 10
