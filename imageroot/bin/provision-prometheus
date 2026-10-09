@@ -12,6 +12,7 @@ import urllib.parse
 from collections.abc import Mapping
 
 import agent
+import metrics_alert_rules
 import yaml
 
 ALERT_MANAGER_DEFAULT_CONFIG = {
@@ -87,7 +88,7 @@ def generate_prometheus_config(redis_client):
     with open('prometheus.yml', 'w', encoding='utf-8') as fp:
         yaml.safe_dump(config, fp, sort_keys=False)
 
-def validate_and_generate_provider_configs(redis_client):
+def generate_node_configs(redis_client):
     for nkey in redis_client.scan_iter("node/*/vpn"):
         node_id = nkey.split('/')[1]
         vpn = redis_client.hgetall(nkey)
@@ -101,14 +102,37 @@ def validate_and_generate_provider_configs(redis_client):
             file.write(f"    target_type: node\n")
             file.write(f"    node: {node_id}\n")
 
-    for module in redis_client.scan_iter("module/*/metrics_targets"):
-        module_id = module.split('/')[1]
-        targets = redis_client.hgetall(module)
+def _decode_target_text(value, label):
+    if isinstance(value, bytes):
+        try:
+            return value.decode('utf-8')
+        except UnicodeDecodeError as ex:
+            raise ValueError(f"{label} is not valid UTF-8: {ex}") from ex
+    return value
+
+def validate_and_generate_provider_configs(redis_client):
+    for raw_module in redis_client.scan_iter("module/*/metrics_targets"):
+        try:
+            module = _decode_target_text(raw_module, 'Redis key')
+        except ValueError as ex:
+            print(f"Skipped target hash {raw_module!r}: {ex}", file=sys.stderr)
+            continue
+        parts = module.split('/') if isinstance(module, str) else []
+        if len(parts) != 3 or parts[0] != 'module' or parts[2] != 'metrics_targets':
+            print(f"Skipped target hash {module!r}: invalid Redis key shape", file=sys.stderr)
+            continue
+        module_id = parts[1]
+        targets = redis_client.hgetall(raw_module)
         for db_key, db_val in targets.items():
             # Isolate malformed fields so valid targets from the same provider
             # can still be materialized.
             try:
-                data = yaml.safe_load(db_val)
+                db_key = _decode_target_text(db_key, 'target type')
+                basename = metrics_alert_rules.generated_provider_filename(
+                    module_id, db_key,
+                    field_label='target type', filename_label='target',
+                )
+                data = yaml.safe_load(_decode_target_text(db_val, 'target payload'))
                 data = normalize_provider_targets(
                     data,
                     redis_key=module,
@@ -116,9 +140,12 @@ def validate_and_generate_provider_configs(redis_client):
                     module_id=module_id,
                 )
             except (TypeError, ValueError, yaml.YAMLError) as ex:
-                print(f"Skipped target {db_key} for module {module_id}: {ex}", file=sys.stderr)
+                print(
+                    f"Skipped target {db_key!r} for module {module_id!r} "
+                    f"at Redis key {module!r}: {ex}", file=sys.stderr,
+                )
                 continue
-            filename = f"prometheus.d/provision_{module_id}_{db_key}.yml"
+            filename = os.path.join('prometheus.d', basename)
             with open(filename, 'w', encoding='utf-8') as fp:
                  yaml.safe_dump(data, fp, sort_keys=False)
 
@@ -283,19 +310,26 @@ def generate_custom_alertmanager_templates(redis_client):
 def main():
     # connect to client and fetch providers for prometheus
     redis_client = agent.redis_connect(use_replica=True)
+    # Decode module integration data per source, not inside SCAN or HGETALL.
+    raw_redis_client = agent.redis_connect(
+        use_replica=True, decode_responses=False,
+    )
 
     # This script can run before create-module, as event
     # handler. Ensure required dir exists:
     os.makedirs("prometheus.d", exist_ok=True)
+    os.makedirs("rules.d", exist_ok=True)
 
     # Generate providers configuration
     clean_up_old_provisioned_targets(redis_client)
     generate_prometheus_config(redis_client)
-    validate_and_generate_provider_configs(redis_client)
+    generate_node_configs(redis_client)
+    validate_and_generate_provider_configs(raw_redis_client)
     clean_up_old_provider_configs(redis_client)
 
     # Generate alertmanager configuration
     generate_alertmanagr_config(redis_client)
+    metrics_alert_rules.provision_module_alert_rules(raw_redis_client)
     generate_custom_alertmanager_rules(redis_client)
     generate_custom_alertmanager_templates(redis_client)
 
