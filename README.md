@@ -28,8 +28,7 @@ Available alerts:
 - One ore more backups have failed
 - Paritions are getting full
 
-Prometheus sends alerts to the local Alertmanager. Enterprise (`nsent`)
-clusters also send them directly to my Mimir.
+By default, the system will send alerts only to Nethesis portals.
 Mail notifications can be enabled by setting the `mail_to` parameter, see the [Configure](#configure) section.
 
 ## Install
@@ -59,8 +58,7 @@ Configuration files are saved inside the state directory. The most important fil
 
 - prometheus.yml: Prometheus configuration
   - prometheus.d: directory containing node configuration files
-  - rules.d: directory containing built-in, legacy custom, and generated
-    provider alert rules
+  - rules.d: directory containing custom alert rules
 - alertmanager.yml: Alertmanager configuration
   - templates.d: directory containing custom alert templates
 - local.yml: Grafana configuration, if enabled
@@ -70,8 +68,8 @@ Configuration files are saved inside the state directory. The most important fil
 Prometheus sends every alert to the local Alertmanager, which sends mail
 and feeds the cluster alert list.
 
-On Enterprise (`nsent`) clusters, Prometheus also sends alerts directly to
-the my Mimir alertmanager. Its URL and credentials are read from the
+Enterprise (`nsent`) clusters also send alerts to the my Mimir
+alertmanager. Its URL and credentials are read from the
 `cluster/subscription` key in Redis: the URL is derived from
 `collect_url`, and login uses `system_id` and `auth_token`. No extra
 configuration is needed.
@@ -197,7 +195,7 @@ When a module wants to add a new target, it must use the `metrics-target-changed
 The `provision-prometheus` script searches for targets in:
 
 ```text
-module/<module_id>/metrics_targets
+module/<publisher_id>/metrics_targets
 ```
 
 The Redis hash contains:
@@ -205,11 +203,11 @@ The Redis hash contains:
 - field `<target_type>`, a stable name identifying the target type;
 - value `<yaml_config>`, a Prometheus `file_sd_config` YAML list.
 
-The module ID from the Redis key is authoritative. For every target,
+The publisher ID from the Redis key is authoritative. For every target,
 provisioning:
 
 - creates the `labels` mapping when it is absent;
-- sets `module_id` to `<module_id>`;
+- sets `module_id` to `<publisher_id>`;
 - sets `target_type` to the Redis field name;
 - preserves every other label.
 
@@ -220,14 +218,6 @@ field, and item position.
 Each Redis field is validated independently. A malformed field is skipped
 without preventing valid fields from the same or other publishers from being
 materialized.
-
-Target hashes must have exactly the form `module/<module_id>/metrics_targets`.
-Module IDs and target field names must be non-empty and use only ASCII letters,
-digits, `.`, `_`, and `-`. Neither may be `.` or `..`. The generated filename
-must fit the 255-byte limit. Invalid names are rejected before file access and
-reported with their Redis key and field. Actual filesystem failures still
-abort provisioning. Because generated targets are rebuilt on each pass, an
-invalid replacement removes the previously generated target configuration.
 
 For example, publish a PostgreSQL target with:
 
@@ -260,7 +250,7 @@ Provisioning adds the authoritative labels:
 The generated configuration is saved as:
 
 ```text
-prometheus.d/provision_<module_id>_<target_type>.yml
+prometheus.d/provision_<publisher_id>_<target_type>.yml
 ```
 
 After adding, updating, or removing a target, the publisher must emit the
@@ -268,7 +258,7 @@ After adding, updating, or removing a target, the publisher must emit the
 
 #### Provider alert identity
 
-Alerts carrying `module_id` are grouped by the local Alertmanager using `alertname`,
+Alerts carrying `module_id` are grouped by Alertmanager using `alertname`,
 `node`, and `module_id`. This keeps same-name alerts from different module
 instances in separate notification groups.
 
@@ -276,185 +266,10 @@ Critical alerts inhibit warning alerts only when both `alertname` and
 `module_id` match. Alerts without `module_id`, such as alerts generated from
 cluster-node targets, retain their previous grouping and inhibition behavior.
 
-### Module-provided alert rules
-
-A module instance can publish alerts for its own metrics through a Redis hash:
-
-```text
-module/<module_id>/metrics_alert_rules
-```
-
-The metrics module reads this hash during provisioning, scopes each rule to
-the publishing instance, and validates it before installing a generated rule
-file. Publish the corresponding scrape targets through
-[`metrics_targets`](#metrics-target-changed-event) so their series carry the
-same `module_id` used to scope the rules. Generated files belong to the metrics
-module and must not be edited directly.
-
-Each hash field is a stable `<rule_set_name>` whose value is UTF-8 YAML. Save
-either of the following examples as `alerts.yml`. A complete rule file contains
-named groups:
-
-```yaml
-groups:
-- name: postgresql.rules
-  rules:
-  - alert: PostgresqlDown
-    expr: up{target_type="postgres"} == 0
-    for: 5m
-    labels:
-      severity: critical
-    annotations:
-      summary_en: PostgreSQL is down
-      summary_it: PostgreSQL non raggiungibile
-      description_en: The PostgreSQL exporter cannot be scraped.
-      description_it: Impossibile contattare l'exporter PostgreSQL.
-```
-
-A single alert rule omits the `groups` wrapper:
-
-```yaml
-alert: PostgresqlConnectionsHigh
-expr: pg_stat_activity_count{target_type="postgres"} > 100
-for: 10m
-labels:
-  severity: warning
-annotations:
-  summary_en: Too many PostgreSQL connections
-  summary_it: Troppe connessioni PostgreSQL
-  description_en: PostgreSQL has more than 100 active connections.
-  description_it: PostgreSQL ha più di 100 connessioni attive.
-```
-
-Module IDs and rule-set names must be non-empty and contain only ASCII letters,
-digits, `.`, `_`, and `-`. Neither may be `.` or `..`, and the generated filename
-must fit within 255 bytes. Each field generates one file:
-
-```text
-rules.d/provision_<module_id>_<rule_set_name>.yml
-```
-
-Single rules receive the group name `ns8:<module_id>:<rule_set_name>`, while
-groups in complete files receive
-`ns8:<module_id>:<rule_set_name>:<local_group_name>`. This keeps group names
-distinct across publishers and rule sets. Local group names must be non-empty,
-unique within the field after trimming surrounding whitespace, and must not
-start with the reserved `ns8:` prefix.
-
-#### Identity and query scoping
-
-The module ID from the Redis key is authoritative for targets, expressions,
-and alert labels. Every vector or range selector is rewritten with the exact
-module ID matcher. For example, a rule published by `postgresql1` changes from:
-
-```promql
-up{target_type="postgres"} == 0
-```
-
-to a canonically formatted expression restricted to that instance:
-
-```promql
-up{module_id="postgresql1",target_type="postgres"} == 0
-```
-
-The generated rule also has the static label `module_id: postgresql1`. This
-keeps the alert identity when an aggregation removes labels from its query
-result. Because selectors are restricted to the publisher's series, node-wide,
-cluster-wide, or cross-module rules belong in the built-in metrics rules.
-
-Existing exact `module_id` matchers are retained after canonical formatting.
-Authored matchers that conflict with the publisher's scope, use regular
-expressions or negation, or cover only some selectors produce a warning when
-rewritten. Conflicting static `module_id` labels are also replaced and reported.
-Expressions without a vector or range selector, such as `vector(1)`, are rejected.
-
-Rewriting and rule validation use `promtool` from the module's declared
-Prometheus image. Avoid multiple `module_id` matchers in one selector: the
-integration suite covers a Prometheus 3.5.3 rewrite failure for
-`count({module_id="x",module_id!="y"})`. That input is rejected with the file
-retention behavior described below.
-
-#### Validation, retention, and warnings
-
-Each field is validated independently, and a failure rejects the whole field.
-Invalid identifiers, non-UTF-8 payloads, malformed YAML, recording rules,
-invalid PromQL, duplicate local group names, and failed `promtool check rules`
-validation prevent installation. If multiple sources produce the same filename,
-all colliding sources are rejected. Valid fields can still be installed.
-
-For a source with valid identifiers, a rejected replacement retains the previous
-generated file byte-for-byte when its ownership header matches that exact Redis
-key and field. A new invalid source creates no file. Redis still contains the
-rejected value, so correct it and publish the event again to install an update.
-Redis, container tooling, and filesystem failures instead abort provisioning.
-Files already installed during that pass are not rolled back.
-
-Use `severity: warning` or `severity: critical` and provide `summary_en`,
-`summary_it`, `description_en`, and `description_it` annotations. Missing or
-non-recommended metadata produces warnings rather than rejection by itself,
-but the resulting file must still pass `promtool` validation.
-
-Validation does not check whether referenced metrics have been scraped, so a
-loaded rule can return no data. It also adds no duplicate-identity warning for
-repeated `(alertname, module_id)` pairs. Other labels, including severity, can
-distinguish same-name alert instances, subject to normal `promtool` validation.
-
-#### Publish, activate, and remove rules
-
-Run the following commands on an NS8 node with access to the cluster Redis.
-Replace `postgresql1` with the publishing module instance and `postgres` with
-its stable rule-set name. Store `alerts.yml`, then publish an event with an
-empty JSON object on that instance's channel:
-
-```bash
-redis-cli -x hset \
-  module/postgresql1/metrics_alert_rules \
-  postgres < alerts.yml
-redis-cli publish \
-  module/postgresql1/event/metrics-alert-rules-changed '{}'
-```
-
-Successful Redis commands establish publication, not validation or activation.
-The event handler provisions the files, then reloads an active Prometheus
-instance. It verifies the reload-success metric and an advancing reload
-timestamp, falling back to a checked restart if reload fails or cannot be
-verified. An inactive service remains stopped and reads the generated files at
-its next normal start. If provisioning or restart verification fails, the
-handler reports an error.
-
-Inspect the metrics module logs for rejected fields, metadata warnings, or
-activation errors. In Prometheus, check the Rules page for the generated group
-and its scoped expression. For the complete example above, the group is
-`ns8:postgresql1:postgres:postgresql.rules`. A loaded rule only fires when its
-expression returns a matching result for the configured `for` duration.
-
-To remove this rule set, delete its field and publish the same event:
-
-```bash
-redis-cli hdel module/postgresql1/metrics_alert_rules postgres
-redis-cli publish \
-  module/postgresql1/event/metrics-alert-rules-changed '{}'
-```
-
-Publishers should remove obsolete fields during uninstall, disable, or restore.
-Provisioning removes generated files whose source fields no longer exist, and
-the `module-removed` event also triggers provisioning and verified activation.
-
-Module alerts use the same [delivery configuration](#forwarding-alerts-to-mynethesisit)
-as built-in alerts. Prometheus sends them directly to the local Alertmanager
-and, for Enterprise (`nsent`) subscriptions, to my Mimir. Alert names and
-labels, including `module_id`, are sent unchanged. Critical alerts use the
-configured local email route.
-
-This publisher contract applies only to `metrics_alert_rules`. The existing
-experimental metrics-local `custom_alerts` interface remains a separate legacy
-path and is not migrated by this feature.
-
-The implementation is in
-[`metrics_alert_rules.py`](imageroot/bin/metrics_alert_rules.py) and
-[`reload-prometheus-rules`](imageroot/bin/reload-prometheus-rules), with live
-workflow coverage in
-[`20__module_alert_rules.robot`](tests/20__module_alert_rules.robot).
+Generic downstream identifiers are also scoped by a non-empty `module_id`,
+preventing a resolved alert from one module instance from clearing a same-name
+alert that is still firing for another instance. Explicit legacy mappings
+retain their existing identifiers.
 
 ### Provisioning Grafana
 
@@ -526,6 +341,39 @@ datasources:
     connMaxLifetime: 14400
     postgresVersion: 14000
     timescaledb: false
+```
+
+### Extra Grafana container options
+
+The `PODMAN_RUN_OPTS` environment variable adds options to the `podman
+run` command of the Grafana container. It is empty by default.
+
+The value is split on spaces, so each option must not contain spaces.
+Setting the variable replaces its previous value: put all the required
+options in a single value.
+
+#### Disable telemetry
+
+The checks for Grafana and plugin updates on `grafana.com` are
+disabled by default.
+
+Grafana still periodically sends anonymous usage statistics to
+`stats.grafana.org`. If the requests are blocked (e.g. by a DNS filter
+like Pi-hole) they may generate many DNS queries.
+
+To disable the usage reporting, pass the corresponding Grafana setting
+as environment variable:
+
+```bash
+runagent -m metrics1 python3 -c 'import agent ; agent.set_env("PODMAN_RUN_OPTS", "-e GF_ANALYTICS_REPORTING_ENABLED=false")'
+runagent -m metrics1 systemctl --user restart grafana.service
+```
+
+To revert to the defaults, remove the variable:
+
+```bash
+runagent -m metrics1 python3 -c 'import agent ; agent.unset_env("PODMAN_RUN_OPTS")'
+runagent -m metrics1 systemctl --user restart grafana.service
 ```
 
 ## Testing

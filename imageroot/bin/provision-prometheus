@@ -52,6 +52,11 @@ def mimir_alertmanager_config(subscription):
     # Only enterprise clusters send alerts to my
     if subscription.get('provider') != 'nsent':
         return None
+    # A subscription not yet migrated to my lacks collect_url: the
+    # migration fires subscription-changed, which restarts Prometheus
+    if not all(subscription.get(key) for key in ('collect_url', 'system_id', 'auth_token')):
+        print("Subscription not migrated to my yet: alerts are not sent to my Mimir", file=sys.stderr)
+        return None
     # collect_url is <base>/collect/api/systems
     url = urllib.parse.urlsplit(subscription['collect_url'])
     port = url.port or (443 if url.scheme == 'https' else 80)

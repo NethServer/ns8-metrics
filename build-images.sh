@@ -26,7 +26,6 @@ buildah config --entrypoint=/ \
     --label="org.nethserver.authorizations=traefik@any:routeadm" \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.max-per-node=1" \
-    --label="org.nethserver.min-core=3.23.0" \
     --label='org.nethserver.flags=core_module no_data_backup' \
     --label="org.nethserver.images=quay.io/prometheus/prometheus:v3.13.2 quay.io/prometheus/alertmanager:v0.32.1 docker.io/grafana/grafana:13.2.3" \
     "${container}"
