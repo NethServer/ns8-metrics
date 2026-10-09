@@ -11,7 +11,6 @@ ${RULE_PUBLISHER_B}       traefik1
 ${TARGET_FIELD}           phase5target
 ${PRIMARY_RULE_FIELD}     phase5primary
 ${SECONDARY_RULE_FIELD}   phase5secondary
-${PINNED_PROMETHEUS_IMAGE}    quay.io/prometheus/prometheus:v3.5.3
 &{EMPTY_MAPPING}
 @{FIXTURE_FIELDS}
 @{FIXTURE_FILES}
@@ -40,8 +39,10 @@ Initialize Module Rule Fixtures
     Set Suite Variable
     ...    ${PROMETHEUS_BASE_URL}
     ...    http://127.0.0.1:9091${url_prefix}
+    # Format expectations with the same promtool the module runs
     ${image} =    Execute Command    runagent -m ${METRICS_ID} printenv PROMETHEUS_IMAGE
-    Should Be Equal    ${image}    ${PINNED_PROMETHEUS_IMAGE}
+    Should Not Be Empty    ${image}
+    Set Suite Variable    ${MODULE_PROMETHEUS_IMAGE}    ${image}
     Reset Module Rule Fixtures
     ${targets} =    Module Directory Files    prometheus.d
     ${rules} =    Module Directory Files    rules.d
@@ -657,25 +658,25 @@ Loaded Rule Should Have Expression
     END
     Length Should Be    ${matches}    1
 
-Pinned Promtool Format
+Module Promtool Format
     [Arguments]    ${expression}
     ${quoted} =    Quote Shell Argument    ${expression}
     ${output}    ${rc} =    Execute Command
-    ...    runagent -m ${METRICS_ID} podman run --rm --network=none --entrypoint=/bin/promtool ${PINNED_PROMETHEUS_IMAGE} --experimental promql format -- ${quoted}
+    ...    runagent -m ${METRICS_ID} podman run --rm --network=none --entrypoint=/bin/promtool ${MODULE_PROMETHEUS_IMAGE} --experimental promql format -- ${quoted}
     ...    return_rc=${True}
     Should Be Equal As Integers    ${rc}    0    ${output}
     RETURN    ${output}
 
 PromQL Should Be Scoped
     [Arguments]    ${authored}    ${expected}    ${warn}=${False}
-    # Explicit semantic expectations are canonicalized by the real pinned parser,
+    # Explicit semantic expectations are canonicalized by the module's real parser,
     # never by the rewrite operation under test (notably unary and label ordering).
     ${document} =    Single Alert Rule Document    Phase5PromqlAlert
     Set To Dictionary    ${document}    expr    ${authored}
     ${payload} =    Serialize Fixture YAML    ${document}
     Write Publisher Rule    ${RULE_PUBLISHER_A}    ${PRIMARY_RULE_FIELD}    ${payload}
     ${cursor} =    Provision Rule Fixtures
-    ${expected} =    Pinned Promtool Format    ${expected}
+    ${expected} =    Module Promtool Format    ${expected}
     ${actual} =    Read Provider Rule Document
     Should Be Equal    ${actual}[groups][0][rules][0][expr]    ${expected}
     Should Be Equal    ${actual}[groups][0][rules][0][labels][module_id]    ${RULE_PUBLISHER_A}

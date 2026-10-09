@@ -460,7 +460,7 @@ Selector-Free And Invalid PromQL Are Rejected Independently
     vector(1)    no vector or range selector
     1 + 2        no vector or range selector
     up{          parse error
-    # Promtool v3.5.3 panics when deleting two matchers for the same label.
+    # Promtool panics when deleting two matchers for the same label.
     # Provisioning must reject that source and still load its valid neighbours.
     count({module_id="x",module_id!="y"})    panic: runtime error: slice bounds out of range
 
