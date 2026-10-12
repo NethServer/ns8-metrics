@@ -329,7 +329,13 @@ def main():
 
     # Generate alertmanager configuration
     generate_alertmanagr_config(redis_client)
-    metrics_alert_rules.provision_module_alert_rules(raw_redis_client)
+    try:
+        metrics_alert_rules.provision_module_alert_rules(raw_redis_client)
+    except metrics_alert_rules.RuleInfrastructureError as ex:
+        print(
+            "Warning: module alert-rule provisioning failed; "
+            f"rules may be stale or incomplete: {ex}", file=sys.stderr,
+        )
     generate_custom_alertmanager_rules(redis_client)
     generate_custom_alertmanager_templates(redis_client)
 
