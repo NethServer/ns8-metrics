@@ -6,6 +6,7 @@
 Description=Prometheus server
 
 [Service]
+TimeoutStartSec=120s
 Environment=PODMAN_SYSTEMD_UNIT=%n
 EnvironmentFile=%E/state/environment
 WorkingDirectory=%E/state
