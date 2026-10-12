@@ -12,6 +12,7 @@ import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from enum import Enum
 
 
 PROMETHEUS_ORIGIN = "http://127.0.0.1:9091"
@@ -29,6 +30,12 @@ class RuleReloadError(RuntimeError):
 class ReloadState:
     successful: float | None
     timestamp: float | None
+
+
+class LoadStatus(Enum):
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+    INCONCLUSIVE = "inconclusive"
 
 
 def prometheus_base_url(prometheus_path=None):
@@ -154,12 +161,15 @@ def _wait_for_verified_load(
 ):
     deadline = monotonic() + timeout
     last_problem = "reload metrics did not report success"
+    rejection_observed = False
     while True:
         try:
             state = client.reload_state()
         except Exception as ex:
             last_problem = str(ex)
         else:
+            if state.successful == 0:
+                rejection_observed = True
             timestamp_advanced = (
                 previous_timestamp is None
                 or (
@@ -168,7 +178,7 @@ def _wait_for_verified_load(
                 )
             )
             if state.successful == 1 and timestamp_advanced:
-                return True, None
+                return LoadStatus.VERIFIED, None
             if state.successful != 1:
                 last_problem = "reload-success metric is not 1"
             elif state.timestamp is None:
@@ -178,7 +188,12 @@ def _wait_for_verified_load(
 
         remaining = deadline - monotonic()
         if remaining <= 0:
-            return False, last_problem
+            status = (
+                LoadStatus.REJECTED
+                if rejection_observed
+                else LoadStatus.INCONCLUSIVE
+            )
+            return status, last_problem
         sleep(min(poll_interval, remaining))
 
 
@@ -226,7 +241,7 @@ def reload_prometheus_rules(
                 "using restart fallback"
             )
 
-    reload_verified = False
+    reload_status = LoadStatus.INCONCLUSIVE
     reload_problem = None
     if previous_timestamp is not None:
         reload_result = _execute(
@@ -239,7 +254,7 @@ def reload_prometheus_rules(
             executor,
         )
         if reload_result.returncode == 0:
-            reload_verified, reload_problem = _wait_for_verified_load(
+            reload_status, reload_problem = _wait_for_verified_load(
                 client,
                 previous_timestamp,
                 timeout,
@@ -252,8 +267,14 @@ def reload_prometheus_rules(
                 f"systemd reload exited with status {reload_result.returncode}"
             )
 
-    if reload_verified:
+    if reload_status == LoadStatus.VERIFIED:
         return "reloaded"
+
+    if reload_status == LoadStatus.REJECTED:
+        raise RuleReloadError(
+            "Prometheus rejected the reload (reload-success metric was 0); "
+            "keeping the running service without restart"
+        )
 
     if reload_problem:
         warning(
@@ -270,7 +291,7 @@ def reload_prometheus_rules(
         "Prometheus restart fallback",
         executor,
     )
-    restart_verified, restart_problem = _wait_for_verified_load(
+    restart_status, restart_problem = _wait_for_verified_load(
         client,
         previous_timestamp,
         timeout,
@@ -278,7 +299,7 @@ def reload_prometheus_rules(
         monotonic,
         sleep,
     )
-    if not restart_verified:
+    if restart_status != LoadStatus.VERIFIED:
         raise RuleReloadError(
             "Prometheus restart fallback could not be verified: "
             f"{restart_problem}"
