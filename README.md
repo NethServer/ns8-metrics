@@ -357,17 +357,21 @@ options in a single value.
 The checks for Grafana and plugin updates on `grafana.com` are
 disabled by default.
 
-The Grafana plugin preinstall is disabled too: Grafana does not
-download plugins from `grafana.com` at startup, and uses only the
-plugins bundled in its image. Plugin versions follow the Grafana image
-version of the module. Apps that are not bundled, like Logs Drilldown,
-are not available. When the module is updated, plugins previously
-downloaded by Grafana are removed from its data volume.
+Grafana uses only the plugins bundled in its image, so plugin versions
+follow the Grafana image version of the module:
 
-To enable the plugin preinstall again, add
-`-e GF_PLUGINS_PREINSTALL_DISABLED=false` to `PODMAN_RUN_OPTS`. Plugins
-are then downloaded into the Grafana data volume and updated
-independently from the module.
+- the plugin preinstall is disabled: Grafana does not download plugins
+  from `grafana.com` at startup. Apps that are not bundled, like Logs
+  Drilldown, are not available;
+- plugin installation from the Grafana plugin catalog is disabled;
+- when the module is updated, any plugin found in the Grafana data
+  volume is removed.
+
+To install plugins again, add `-e GF_PLUGINS_PREINSTALL_DISABLED=false`
+(preinstall) and/or `-e GF_PLUGINS_PLUGIN_ADMIN_ENABLED=true` (catalog)
+to `PODMAN_RUN_OPTS`. Plugins are then installed into the Grafana data
+volume, updated independently from the module, and kept on module
+updates.
 
 Grafana still periodically sends anonymous usage statistics to
 `stats.grafana.org`. If the requests are blocked (e.g. by a DNS filter

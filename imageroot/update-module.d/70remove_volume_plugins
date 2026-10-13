@@ -1,0 +1,21 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Grafana uses only the plugins bundled in its image: remove any plugin
+# installed into the data volume, so that no stale copy replaces the
+# bundled version.
+
+# Skip if the administrator enabled plugin installs again
+[[ "$PODMAN_RUN_OPTS" == *GF_PLUGINS_PREINSTALL_DISABLED=false* ]] && exit 0
+[[ "$PODMAN_RUN_OPTS" == *GF_PLUGINS_PLUGIN_ADMIN_ENABLED=true* ]] && exit 0
+
+volume_path=$(podman volume inspect grafana-data --format '{{.Mountpoint}}' 2>/dev/null) || exit 0
+[[ -d "${volume_path}/plugins" ]] || exit 0
+
+# Plugin files are owned by the container user
+podman unshare find "${volume_path}/plugins" -mindepth 1 -maxdepth 1 \
+    -printf "Removing Grafana plugin %f\n" -exec rm -rf {} + >&2

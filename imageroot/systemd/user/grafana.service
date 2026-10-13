@@ -30,6 +30,7 @@ ExecStart=/usr/bin/podman run \
     -e GF_ANALYTICS_CHECK_FOR_UPDATES=false \
     -e GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false \
     -e GF_PLUGINS_PREINSTALL_DISABLED=true \
+    -e GF_PLUGINS_PLUGIN_ADMIN_ENABLED=false \
     $PODMAN_RUN_OPTS \
     ${GRAFANA_IMAGE}
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/grafana.ctr-id -t 10
