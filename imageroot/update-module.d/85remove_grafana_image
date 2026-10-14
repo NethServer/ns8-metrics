@@ -1,0 +1,16 @@
+#!/bin/bash
+
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Grafana now runs from the metrics-grafana image: remove the upstream
+# image of the previous release. Run after 80services, so Grafana is
+# already restarted with the new image.
+
+[ -n "$GRAFANA_IMAGE" ] || exit 0
+
+# update-module does not remove images missing from the label
+podman image rm --ignore "$GRAFANA_IMAGE" || :
+python3 -c 'import agent; agent.unset_env("GRAFANA_IMAGE"); agent.unset_env("PREV_GRAFANA_IMAGE")'

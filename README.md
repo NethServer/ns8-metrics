@@ -357,6 +357,37 @@ options in a single value.
 The checks for Grafana and plugin updates on `grafana.com` are
 disabled by default.
 
+Grafana uses only the plugins bundled in its image, so plugin versions
+follow the module release. The module builds its own Grafana image
+(`grafana/Containerfile`) that adds the Logs Drilldown and Metrics
+Drilldown apps, at pinned versions, to the data sources bundled by
+Grafana:
+
+- the plugin preinstall is disabled: Grafana does not download plugins
+  from `grafana.com` at startup. Other apps, like Traces Drilldown, are
+  not available;
+- plugin installation from the Grafana plugin catalog is disabled;
+- when the module is updated, any plugin found in the Grafana data
+  volume is removed.
+
+Renovate updates the Grafana base image and the app versions in
+`grafana/Containerfile`, in a single "Grafana image" pull request.
+
+After building the image, `build-images.sh` starts Grafana in a
+temporary container (`grafana/check-plugins.sh`) and checks that every
+bundled plugin is loaded with a valid signature made by Grafana Labs.
+The build fails if a package was altered, or if an app does not support
+the Grafana version of the image (`grafanaDependency` in the app
+`plugin.json`); the relevant Grafana log lines are printed. The image
+build also checks that each downloaded app declares the expected
+version.
+
+To install plugins again, add `-e GF_PLUGINS_PREINSTALL_DISABLED=false`
+(preinstall) and/or `-e GF_PLUGINS_PLUGIN_ADMIN_ENABLED=true` (catalog)
+to `PODMAN_RUN_OPTS`. Plugins are then installed into the Grafana data
+volume, updated independently from the module, and kept on module
+updates.
+
 Grafana still periodically sends anonymous usage statistics to
 `stats.grafana.org`. If the requests are blocked (e.g. by a DNS filter
 like Pi-hole) they may generate many DNS queries.

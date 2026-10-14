@@ -2,5 +2,27 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "local>NethServer/.github:ns8-automerge"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Grafana apps bundled in grafana/Containerfile",
+      "managerFilePatterns": [
+        "/(^|/)grafana/Containerfile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+?) depName=(?<depName>\\S+)\\s*\\nARG \\w+_VERSION=(?<currentValue>\\S+)"
+      ],
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Update Grafana and its bundled apps together: app versions depend on the Grafana version",
+      "matchFileNames": [
+        "grafana/Containerfile"
+      ],
+      "groupName": "Grafana image"
+    }
   ]
 }
