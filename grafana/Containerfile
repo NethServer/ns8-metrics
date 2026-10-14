@@ -1,0 +1,40 @@
+#
+# Copyright (C) 2026 Nethesis S.r.l.
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+
+# Grafana image with the Drilldown apps bundled at pinned versions.
+# The module disables plugin downloads, so Grafana uses only the
+# plugins shipped with this image.
+
+# Stage 1: download and verify the app packages
+FROM docker.io/library/alpine:3.24.2 AS plugins
+# Integrity and Grafana compatibility of the packages are checked after
+# the build, by build-images.sh (check-plugins.sh)
+# renovate: datasource=github-releases depName=grafana/logs-drilldown
+ARG LOGS_DRILLDOWN_VERSION=3.0.0
+# renovate: datasource=github-releases depName=grafana/metrics-drilldown
+ARG METRICS_DRILLDOWN_VERSION=3.0.0
+WORKDIR /plugins
+# fetch REPO PLUGIN_ID VERSION
+RUN fetch() { \
+        url="https://github.com/$1/releases/download/v$3/$2-$3.zip" ; \
+        wget -q -O "$2.zip" "${url}" || { echo "ERROR: cannot download ${url}" >&2 ; return 1 ; } ; \
+        unzip -q "$2.zip" && rm -f "$2.zip" || return 1 ; \
+        grep -q "\"version\": *\"$3\"" "$2/plugin.json" \
+            || { echo "ERROR: $2/plugin.json does not declare version $3" >&2 ; return 1 ; } ; \
+    } \
+    && fetch grafana/logs-drilldown grafana-lokiexplore-app "${LOGS_DRILLDOWN_VERSION}" \
+    && fetch grafana/metrics-drilldown grafana-metricsdrilldown-app "${METRICS_DRILLDOWN_VERSION}"
+
+# Stage 2: Grafana runtime
+FROM docker.io/grafana/grafana:13.2.3
+COPY --from=plugins --chown=0:0 /plugins/ /usr/share/grafana/data/plugins-bundled/
+# The upstream image makes bundled plugins writable by anyone, and
+# Grafana deletes them when it installs a newer copy: make their
+# directories read-only. Changing only directories keeps the layer small.
+USER root
+RUN find /usr/share/grafana/data/plugins-bundled -type d \
+        -exec chown root:root {} + -exec chmod 755 {} +
+# Same non-root user as the upstream image
+USER 472

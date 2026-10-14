@@ -27,13 +27,22 @@ buildah config --entrypoint=/ \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.max-per-node=1" \
     --label='org.nethserver.flags=core_module no_data_backup' \
-    --label="org.nethserver.images=quay.io/prometheus/prometheus:v3.13.2 quay.io/prometheus/alertmanager:v0.32.1 docker.io/grafana/grafana:13.2.3" \
+    --label="org.nethserver.images=docker.io/prom/prometheus:v3.13.2 docker.io/prom/alertmanager:v0.32.1 ghcr.io/nethserver/metrics-grafana:${IMAGETAG:-latest}" \
     "${container}"
 # Commit the image
 buildah commit "${container}" "${repobase}/${reponame}"
 
 # Append the image URL to the images array
 images+=("${repobase}/${reponame}")
+
+# Build the Grafana image with bundled plugins
+buildah build -t "${repobase}/metrics-grafana" grafana
+# Check that Grafana loads the bundled plugins with a valid signature
+grafana_check=$(buildah from "${repobase}/metrics-grafana")
+buildah run --volume "${PWD}/grafana/check-plugins.sh:/check-plugins.sh:ro,z" "${grafana_check}" -- sh /check-plugins.sh \
+    || { buildah rm "${grafana_check}" ; exit 1 ; }
+buildah rm "${grafana_check}"
+images+=("${repobase}/metrics-grafana")
 
 
 #
