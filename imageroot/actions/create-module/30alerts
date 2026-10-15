@@ -79,7 +79,7 @@ with open('rules.d/disk.yml', 'w') as f:
     f.write('''groups:
 - name: Disk
   rules:
-  - alert: DiskSpaceLow
+  - alert: DiskSpaceWarning
     expr: node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} and (node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes < .20 and node_filesystem_avail_bytes{fstype!~"^(fuse.*|tmpfs|cifs|nfs)"} / node_filesystem_size_bytes >= .10 and on (instance, device, mountpoint) node_filesystem_readonly == 0)
     for: 5m
     labels:
