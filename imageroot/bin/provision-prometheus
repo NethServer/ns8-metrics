@@ -8,6 +8,7 @@
 import fcntl
 import json
 import os
+import re
 import sys
 import urllib.parse
 from collections.abc import Mapping
@@ -54,6 +55,14 @@ NODE_MODULE_ID_RELABEL = {
     'regex': 'node;;([a-z][a-z0-9-]*[0-9]+)',
     'target_label': 'module_id',
 }
+
+# Modules list the systemd units that must keep running in this Redis hash:
+# field = unit name, value = alert severity (empty means critical).
+MODULE_SERVICES_KEY_PATTERN = 'module/*/metrics_services'
+MODULE_SERVICES_RULES_FILE = 'rules.d/module_services.yml'
+MODULE_ID_PATTERN = re.compile(r'^[a-z][a-z0-9-]*[0-9]+$')
+SERVICE_UNIT_PATTERN = re.compile(r'^[A-Za-z0-9@_.:-]+\.service$')
+SERVICE_SEVERITIES = {'critical', 'warning'}
 
 # Prometheus adds /api/v2/alerts to this path
 MIMIR_ALERTMANAGER_PATH = '/collect/api/services/mimir/alertmanager'
@@ -330,6 +339,66 @@ def generate_custom_alertmanager_rules(redis_client):
         except:
             pass
 
+def read_module_services(redis_client, module_nodes):
+    """Return the expected services as a sorted list of label mappings."""
+    services = []
+    for raw_key in redis_client.scan_iter(MODULE_SERVICES_KEY_PATTERN):
+        try:
+            key = _decode_target_text(raw_key, 'Redis key')
+        except ValueError as ex:
+            print(f"Skipped service hash {raw_key!r}: {ex}", file=sys.stderr)
+            continue
+        parts = key.split('/')
+        module_id = parts[1]
+        if len(parts) != 3 or not MODULE_ID_PATTERN.fullmatch(module_id):
+            print(f"Skipped service hash {key!r}: invalid module ID", file=sys.stderr)
+            continue
+        # The node label lets the alert check that the node is reachable
+        # and its container collector is fresh.
+        node_id = module_nodes.get(module_id)
+        if not node_id:
+            print(f"Skipped service hash {key!r}: module node is unknown", file=sys.stderr)
+            continue
+        for raw_unit, raw_severity in redis_client.hgetall(raw_key).items():
+            try:
+                unit = _decode_target_text(raw_unit, 'unit name')
+                severity = _decode_target_text(raw_severity, 'severity') or 'critical'
+                if not SERVICE_UNIT_PATTERN.fullmatch(unit):
+                    raise ValueError("unit name must end with .service")
+                if severity not in SERVICE_SEVERITIES:
+                    raise ValueError(f"severity {severity!r} is not one of {sorted(SERVICE_SEVERITIES)}")
+            except ValueError as ex:
+                print(f"Skipped service {raw_unit!r} at Redis key {key!r}: {ex}", file=sys.stderr)
+                continue
+            services.append({
+                'module_id': module_id,
+                'node': node_id,
+                'unit': unit,
+                'severity': severity,
+            })
+    return sorted(services, key=lambda labels: (labels['module_id'], labels['unit']))
+
+def generate_module_services_rules(redis_client):
+    # The ModuleServiceDown alert (see create-module/30alerts) compares
+    # these constant series with the running containers: a stopped
+    # container has no ns8_container_info series at all.
+    module_nodes = {
+        _decode_target_text(module_id, 'module ID'): _decode_target_text(node_id, 'node ID')
+        for module_id, node_id in redis_client.hgetall('cluster/module_node').items()
+    }
+    rules = [
+        {'record': 'ns8:module_service_expected', 'expr': 'vector(1)', 'labels': labels}
+        for labels in read_module_services(redis_client, module_nodes)
+    ]
+    if rules:
+        document = {'groups': [{'name': 'Module services', 'rules': rules}]}
+        write_file_atomic(MODULE_SERVICES_RULES_FILE, yaml.safe_dump(document, sort_keys=False))
+    else:
+        try:
+            os.remove(MODULE_SERVICES_RULES_FILE)
+        except FileNotFoundError:
+            pass
+
 def generate_custom_alertmanager_templates(redis_client):
     # Custom template declarations are concatenated in the same file:
     templates = redis_client.hvals(f'module/{os.environ["MODULE_ID"]}/custom_templates')
@@ -373,6 +442,7 @@ def provision():
         )
     generate_custom_alertmanager_rules(redis_client)
     generate_custom_alertmanager_templates(redis_client)
+    generate_module_services_rules(raw_redis_client)
 
 # Keep helper functions importable without connecting to Redis during tests.
 if __name__ == '__main__':
