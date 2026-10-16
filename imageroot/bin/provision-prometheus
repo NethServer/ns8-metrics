@@ -5,9 +5,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+import fcntl
 import json
 import os
 import sys
+import tempfile
 import urllib.parse
 from collections.abc import Mapping
 
@@ -47,6 +49,41 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
 # Prometheus adds /api/v2/alerts to this path
 MIMIR_ALERTMANAGER_PATH = '/collect/api/services/mimir/alertmanager'
 
+def write_file_atomic(path, content):
+    # Prometheus and Alertmanager may reload at any time: never let them
+    # read a truncated file.
+    descriptor, temporary_path = tempfile.mkstemp(
+        dir=os.path.dirname(path) or '.',
+        prefix=f".{os.path.basename(path)}.",
+        suffix='.tmp',
+    )
+    try:
+        with os.fdopen(descriptor, 'w', encoding='utf-8') as fp:
+            fp.write(content)
+            fp.flush()
+            os.fchmod(fp.fileno(), 0o644)
+            os.fsync(fp.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        try:
+            os.remove(temporary_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+def write_file_if_changed(path, content):
+    # Single-file bind mounts keep the original inode, so these files
+    # cannot be replaced atomically. Rewrite them only on real changes,
+    # to keep a concurrent reload away from a truncated file.
+    try:
+        with open(path, encoding='utf-8') as fp:
+            if fp.read() == content:
+                return
+    except FileNotFoundError:
+        pass
+    with open(path, 'w', encoding='utf-8') as fp:
+        fp.write(content)
+
 def mimir_alertmanager_config(subscription):
     """Return the my Mimir alertmanager entry, or None."""
     # Only enterprise clusters send alerts to my
@@ -85,8 +122,7 @@ def generate_prometheus_config(redis_client):
         'alerting': {'alertmanagers': alertmanagers},
         'rule_files': ['/prometheus/rules.d/*.yml'],
     }
-    with open('prometheus.yml', 'w', encoding='utf-8') as fp:
-        yaml.safe_dump(config, fp, sort_keys=False)
+    write_file_if_changed('prometheus.yml', yaml.safe_dump(config, sort_keys=False))
 
 def generate_node_configs(redis_client):
     for nkey in redis_client.scan_iter("node/*/vpn"):
@@ -95,12 +131,14 @@ def generate_node_configs(redis_client):
         if redis_client.sismember(f"node/{node_id}/flags", "nomodules"):
             continue # skip ns7 migration node
         # Generate configuration file
-        with open(f"prometheus.d/node_{node_id}.yml", 'w', encoding='utf-8') as file:
-            file.write('- targets:\n')
-            file.write(f"    - '{vpn.get('ip_address')}:9100'\n")
-            file.write('  labels:\n')
-            file.write(f"    target_type: node\n")
-            file.write(f"    node: {node_id}\n")
+        write_file_atomic(
+            f"prometheus.d/node_{node_id}.yml",
+            '- targets:\n'
+            f"    - '{vpn.get('ip_address')}:9100'\n"
+            '  labels:\n'
+            "    target_type: node\n"
+            f"    node: {node_id}\n",
+        )
 
 def _decode_target_text(value, label):
     if isinstance(value, bytes):
@@ -146,8 +184,7 @@ def validate_and_generate_provider_configs(redis_client):
                 )
                 continue
             filename = os.path.join('prometheus.d', basename)
-            with open(filename, 'w', encoding='utf-8') as fp:
-                 yaml.safe_dump(data, fp, sort_keys=False)
+            write_file_atomic(filename, yaml.safe_dump(data, sort_keys=False))
 
 def normalize_provider_targets(
     data, redis_key, target_type, module_id, warning_stream=None
@@ -279,8 +316,7 @@ def generate_alertmanagr_config(redis_client):
 
     os.makedirs('templates.d', exist_ok=True)
 
-    with open('alertmanager.yml', 'w') as f:
-        yaml.safe_dump(json.loads(json.dumps(alert_config)), f, default_flow_style=False, sort_keys=False)
+    write_file_if_changed('alertmanager.yml', yaml.safe_dump(json.loads(json.dumps(alert_config)), default_flow_style=False, sort_keys=False))
 
 def generate_custom_alertmanager_rules(redis_client):
     rules = []
@@ -293,7 +329,7 @@ def generate_custom_alertmanager_rules(redis_client):
                 print(f"Skipped custom rule {key}: {ex}", file=sys.stderr)
     if rules:
         custom_data = {"groups": [{"name": "Custom", "rules": rules}]}
-        yaml.safe_dump(custom_data, open('rules.d/custom.yml', 'w'))
+        write_file_atomic('rules.d/custom.yml', yaml.safe_dump(custom_data))
     else:
         try:
             os.remove('rules.d/custom.yml')
@@ -302,12 +338,17 @@ def generate_custom_alertmanager_rules(redis_client):
 
 def generate_custom_alertmanager_templates(redis_client):
     # Custom template declarations are concatenated in the same file:
-    with open(f'templates.d/custom.tmpl', 'w') as f:
-        for template in redis_client.hvals(f'module/{os.environ["MODULE_ID"]}/custom_templates'):
-            if template:
-                f.write(template)
+    templates = redis_client.hvals(f'module/{os.environ["MODULE_ID"]}/custom_templates')
+    write_file_atomic('templates.d/custom.tmpl', ''.join(template for template in templates if template))
 
 def main():
+    # Event handlers can run concurrently: serialize provisioning so runs
+    # don't interleave writes and stale-file cleanups.
+    with open('.provision-prometheus.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        provision()
+
+def provision():
     # connect to client and fetch providers for prometheus
     redis_client = agent.redis_connect(use_replica=True)
     # Decode module integration data per source, not inside SCAN or HGETALL.
