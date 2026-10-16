@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
+import hashlib
 import json
 import os
 import re
@@ -30,6 +31,8 @@ OWNERSHIP_PREFIX = "# ns8-metrics-source: "
 GENERATED_RULE_PREFIX = "provision_"
 GENERATED_RULE_SUFFIX = ".yml"
 PROMTOOL_RULE_PATH = "/tmp/ns8-module-rules.yml"
+# Bump to invalidate generated files after a transformer change.
+GENERATED_RULE_FORMAT = 1
 
 
 class RuleValidationError(ValueError):
@@ -577,11 +580,33 @@ def _source_identity(source):
     return (source.redis_key, source.rule_set_name)
 
 
-def _ownership_header(source):
+def _source_fingerprint(source, image):
+    payload = source.payload
+    if isinstance(payload, str):
+        payload = payload.encode("utf-8", errors="surrogateescape")
+    elif not isinstance(payload, bytes):
+        payload = repr(payload).encode("utf-8", errors="backslashreplace")
+    return hashlib.sha256(
+        json.dumps(
+            [
+                GENERATED_RULE_FORMAT,
+                image,
+                source.redis_key,
+                source.rule_set_name,
+                payload.hex(),
+            ],
+            separators=(",", ":"),
+        ).encode("ascii")
+    ).hexdigest()
+
+
+def _ownership_header(source, fingerprint=None):
     metadata = {
         "field": source.rule_set_name,
         "redis_key": source.redis_key,
     }
+    if fingerprint is not None:
+        metadata["fingerprint"] = fingerprint
     return OWNERSHIP_PREFIX + json.dumps(
         metadata,
         ensure_ascii=True,
@@ -591,6 +616,12 @@ def _ownership_header(source):
 
 
 def _read_rule_owner(path):
+    metadata = _read_rule_metadata(path)
+    return None if metadata is None else metadata[0]
+
+
+def _read_rule_metadata(path):
+    """Return ((redis_key, field), fingerprint or None), or None."""
     try:
         with open(path, "rb") as stream:
             first_line = stream.readline(4096)
@@ -612,10 +643,25 @@ def _read_rule_owner(path):
     rule_set_name = metadata.get("field")
     if not isinstance(redis_key, str) or not isinstance(rule_set_name, str):
         return None
-    return (redis_key, rule_set_name)
+    fingerprint = metadata.get("fingerprint")
+    if not isinstance(fingerprint, str):
+        fingerprint = None
+    return ((redis_key, rule_set_name), fingerprint)
 
 
-def _serialize_candidate(source, document):
+def _is_current_generated_rule(source, rules_directory, fingerprint):
+    destination = os.path.join(rules_directory, source.filename)
+    if os.path.islink(destination) or not os.path.isfile(destination):
+        return False
+    metadata = _read_rule_metadata(destination)
+    return (
+        metadata is not None
+        and metadata[0] == _source_identity(source)
+        and metadata[1] == fingerprint
+    )
+
+
+def _serialize_candidate(source, document, fingerprint=None):
     try:
         payload = yaml.safe_dump(
             document,
@@ -626,13 +672,13 @@ def _serialize_candidate(source, document):
         raise RuleValidationError(
             f"{source.context}: cannot serialize effective rule document: {ex}"
         ) from ex
-    return _ownership_header(source) + payload
+    return _ownership_header(source, fingerprint) + payload
 
 
 def _install_candidate(
-    source, document, rules_directory, promtool_runner
+    source, document, rules_directory, promtool_runner, fingerprint=None
 ):
-    serialized = _serialize_candidate(source, document)
+    serialized = _serialize_candidate(source, document, fingerprint)
     destination = os.path.join(rules_directory, source.filename)
     temporary_path = None
     try:
@@ -765,6 +811,16 @@ def provision_module_alert_rules(
                 )
             continue
         source = owners[0]
+        image = (
+            getattr(runner, "image", None)
+            if runner is not None
+            else os.environ.get("PROMETHEUS_IMAGE")
+        )
+        fingerprint = _source_fingerprint(source, image) if image else None
+        if fingerprint is not None and _is_current_generated_rule(
+            source, rules_directory, fingerprint
+        ):
+            continue
         if runner is None:
             runner = PromtoolRunner()
         try:
@@ -772,7 +828,9 @@ def provision_module_alert_rules(
             # have disjoint group namespaces. Local duplicates are rejected
             # by the transformer.
             document = transform_alert_rule(source, runner, warning)
-            _install_candidate(source, document, rules_directory, runner)
+            _install_candidate(
+                source, document, rules_directory, runner, fingerprint
+            )
         except RuleValidationError as ex:
             _report_source_failure(source, ex, warning)
 
