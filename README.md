@@ -271,6 +271,49 @@ preventing a resolved alert from one module instance from clearing a same-name
 alert that is still firing for another instance. Explicit legacy mappings
 retain their existing identifiers.
 
+#### Per-module node series
+
+Since core 3.22.0, the node exporter of every node also publishes
+per-module series, such as `ns8_container_*` and `ns8_module_*_bytes`.
+They identify the module with the `module` label, for example:
+
+```text
+ns8_container_info{module="nethvoice-proxy1",container="kamailio",unit="kamailio.service",node="1",target_type="node"} 1
+```
+
+Prometheus copies `module` to `module_id` on these series, so they can be
+matched by `module_id` like the series of module targets. The copy applies
+only to node targets, only when the series has no `module_id` yet, and only
+to module IDs: series of core containers (`module="core"`) and of
+unattributed containers (`module="unknown"`) get no `module_id`.
+
+Alerts on these series now carry `module_id`, so they follow the grouping
+and inhibition rules described above for provider alerts.
+
+For example, a module can detect that one of its containers is not running
+while the others are:
+
+```promql
+count by (module_id, node) (ns8_container_info{module_id="nethvoice-proxy1"})
+  unless on (module_id, node)
+count by (module_id, node) (ns8_container_info{module_id="nethvoice-proxy1",unit="kamailio.service"})
+```
+
+that none of its containers is running:
+
+```promql
+absent(ns8_container_info{module_id="nethvoice-proxy1",unit="kamailio.service"})
+```
+
+The `absent()` result has only the labels of its equality matchers: it has
+no `node`, and it fires also when the node itself is unreachable.
+
+or that a container keeps restarting:
+
+```promql
+changes(ns8_container_start_time_seconds{module_id="nethvoice-proxy1",container="kamailio"}[15m]) > 2
+```
+
 ### Provisioning Grafana
 
 The Grafana service is configured to load all datasources and dashboards from the `datasources` and `dashboards` directories.
