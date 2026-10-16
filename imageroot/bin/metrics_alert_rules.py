@@ -100,7 +100,7 @@ class PromtoolRunner:
                 command,
                 check=False,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
                 text=True,
                 shell=False,
             )
@@ -109,17 +109,19 @@ class PromtoolRunner:
                 f"cannot execute Prometheus tooling: {ex}"
             ) from ex
 
-        output = result.stdout.strip()
+        output = (result.stdout or "").strip()
+        error_output = (result.stderr or "").strip()
+        diagnostics = "\n".join(part for part in (error_output, output) if part)
         if (
             result.returncode in {125, 126, 127}
             or result.returncode < 0
             or result.returncode >= 128
-            or _is_tooling_infrastructure_error(output)
+            or _is_tooling_infrastructure_error(diagnostics)
         ):
-            detail = output or f"podman exited with status {result.returncode}"
+            detail = diagnostics or f"podman exited with status {result.returncode}"
             raise RuleInfrastructureError(detail)
         if result.returncode != 0:
-            detail = output or f"promtool exited with status {result.returncode}"
+            detail = diagnostics or f"promtool exited with status {result.returncode}"
             raise RuleValidationError(detail)
         return output
 
