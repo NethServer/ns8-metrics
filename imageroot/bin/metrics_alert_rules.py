@@ -748,20 +748,26 @@ def _generated_rule_entries(rules_directory):
 
 
 def _clean_up_stale_generated_rules(rules_directory, active_sources):
+    failures = []
     for entry in _generated_rule_entries(rules_directory):
-        if entry.is_symlink():
-            owner = None
-        else:
-            owner = _read_rule_owner(entry.path)
-        source = active_sources.get(owner)
-        if source is not None and entry.name == source.filename:
-            continue
         try:
+            if entry.is_symlink():
+                owner = None
+            else:
+                owner = _read_rule_owner(entry.path)
+            source = active_sources.get(owner)
+            if source is not None and entry.name == source.filename:
+                continue
             os.remove(entry.path)
+        except FileNotFoundError:
+            continue
+        except RuleInfrastructureError as ex:
+            if not isinstance(ex.__cause__, FileNotFoundError):
+                failures.append(str(ex))
         except OSError as ex:
-            raise RuleInfrastructureError(
-                f"cannot remove stale generated rule {entry.path}: {ex}"
-            ) from ex
+            failures.append(f"cannot remove stale generated rule {entry.path}: {ex}")
+    if failures:
+        raise RuleInfrastructureError("; ".join(failures))
 
 
 def _report_source_failure(source, error, warning):
@@ -801,6 +807,8 @@ def provision_module_alert_rules(
         sources_by_filename[filename].append(source)
 
     runner = promtool_runner
+    runner_error = None
+    infrastructure_failures = []
     for filename, owners in sorted(sources_by_filename.items()):
         if len(owners) > 1:
             contexts = ", ".join(owner.context for owner in owners)
@@ -811,19 +819,25 @@ def provision_module_alert_rules(
                 )
             continue
         source = owners[0]
-        image = (
-            getattr(runner, "image", None)
-            if runner is not None
-            else os.environ.get("PROMETHEUS_IMAGE")
-        )
-        fingerprint = _source_fingerprint(source, image) if image else None
-        if fingerprint is not None and _is_current_generated_rule(
-            source, rules_directory, fingerprint
-        ):
-            continue
-        if runner is None:
-            runner = PromtoolRunner()
         try:
+            image = (
+                getattr(runner, "image", None)
+                if runner is not None
+                else os.environ.get("PROMETHEUS_IMAGE")
+            )
+            fingerprint = _source_fingerprint(source, image) if image else None
+            if fingerprint is not None and _is_current_generated_rule(
+                source, rules_directory, fingerprint
+            ):
+                continue
+            if runner is None:
+                if runner_error is not None:
+                    raise runner_error
+                try:
+                    runner = PromtoolRunner()
+                except RuleInfrastructureError as ex:
+                    runner_error = ex
+                    raise
             # Validated source IDs cannot contain ':', so different sources
             # have disjoint group namespaces. Local duplicates are rejected
             # by the transformer.
@@ -833,5 +847,18 @@ def provision_module_alert_rules(
             )
         except RuleValidationError as ex:
             _report_source_failure(source, ex, warning)
+        except RuleInfrastructureError as ex:
+            _report_source_failure(source, ex, warning)
+            infrastructure_failures.append(f"{source.context}: {ex}")
 
-    _clean_up_stale_generated_rules(rules_directory, active_sources)
+    try:
+        _clean_up_stale_generated_rules(rules_directory, active_sources)
+    except RuleInfrastructureError as ex:
+        warning(f"Cannot clean up stale module alert rules: {ex}")
+        infrastructure_failures.append(f"cleanup: {ex}")
+
+    if infrastructure_failures:
+        raise RuleInfrastructureError(
+            "module alert rule provisioning incomplete: "
+            + "; ".join(infrastructure_failures)
+        )
