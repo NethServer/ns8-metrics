@@ -46,6 +46,16 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
     'templates': ["/etc/alertmanager/templates/*.tmpl"]
 }
 
+# Node targets export per-module series, like ns8_container_* and
+# ns8_module_*_bytes, labeled "module". Copy it to "module_id", the label
+# module alert rules are scoped by. The regex matches module IDs only, so
+# "core" and "unknown" series stay without module_id.
+NODE_MODULE_ID_RELABEL = {
+    'source_labels': ['target_type', 'module_id', 'module'],
+    'regex': 'node;;([a-z][a-z0-9-]*[0-9]+)',
+    'target_label': 'module_id',
+}
+
 # Prometheus adds /api/v2/alerts to this path
 MIMIR_ALERTMANAGER_PATH = '/collect/api/services/mimir/alertmanager'
 
@@ -118,6 +128,7 @@ def generate_prometheus_config(redis_client):
         'scrape_configs': [{
             'job_name': 'providers',
             'file_sd_configs': [{'files': ['/prometheus/prometheus.d/*.yml']}],
+            'metric_relabel_configs': [NODE_MODULE_ID_RELABEL],
         }],
         'alerting': {'alertmanagers': alertmanagers},
         'rule_files': ['/prometheus/rules.d/*.yml'],
