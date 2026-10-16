@@ -9,7 +9,6 @@ import fcntl
 import json
 import os
 import sys
-import tempfile
 import urllib.parse
 from collections.abc import Mapping
 
@@ -62,24 +61,8 @@ MIMIR_ALERTMANAGER_PATH = '/collect/api/services/mimir/alertmanager'
 def write_file_atomic(path, content):
     # Prometheus and Alertmanager may reload at any time: never let them
     # read a truncated file.
-    descriptor, temporary_path = tempfile.mkstemp(
-        dir=os.path.dirname(path) or '.',
-        prefix=f".{os.path.basename(path)}.",
-        suffix='.tmp',
-    )
-    try:
-        with os.fdopen(descriptor, 'w', encoding='utf-8') as fp:
-            fp.write(content)
-            fp.flush()
-            os.fchmod(fp.fileno(), 0o644)
-            os.fsync(fp.fileno())
-        os.replace(temporary_path, path)
-    except BaseException:
-        try:
-            os.remove(temporary_path)
-        except FileNotFoundError:
-            pass
-        raise
+    with agent.safe_open(path, 'w', encoding='utf-8') as fp:
+        fp.write(content)
 
 def write_file_if_changed(path, content):
     # Single-file bind mounts keep the original inode, so these files
