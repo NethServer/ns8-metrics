@@ -9,11 +9,11 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+import agent
 import yaml
 
 
@@ -30,7 +30,6 @@ PLACEHOLDER_VALUE = "1"
 OWNERSHIP_PREFIX = "# ns8-metrics-source: "
 GENERATED_RULE_PREFIX = "provision_"
 GENERATED_RULE_SUFFIX = ".yml"
-PROMTOOL_RULE_PATH = "/tmp/ns8-module-rules.yml"
 # Bump to invalidate generated files after a transformer change.
 GENERATED_RULE_FORMAT = 1
 
@@ -80,28 +79,26 @@ class PromtoolRunner:
         ]
         return self._execute(command)
 
-    def check_rules(self, candidate_path):
-        candidate_path = os.path.abspath(os.fspath(candidate_path))
+    def check_rules(self, candidate):
         command = [
             "/usr/bin/podman",
             "run",
             "--rm",
+            "--interactive",
             "--network=none",
-            "--volume",
-            f"{candidate_path}:{PROMTOOL_RULE_PATH}:ro,z",
             "--entrypoint=/bin/promtool",
             self.image,
             "check",
             "rules",
-            PROMTOOL_RULE_PATH,
         ]
-        return self._execute(command)
+        return self._execute(command, candidate)
 
-    def _execute(self, command):
+    def _execute(self, command, stdin=None):
         try:
             result = self.executor(
                 command,
                 check=False,
+                input=stdin,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -135,22 +132,11 @@ def _is_tooling_infrastructure_error(output):
         "Failed to obtain podman configuration:",
         "cannot clone:",
     )
-    candidate_read_errors = (
-        "input/output error",
-        "no such file or directory",
-        "operation not permitted",
-        "permission denied",
-    )
     for line in output.splitlines():
         stripped = line.strip()
         if stripped.startswith(runtime_prefixes):
             return True
         if stripped.startswith("time=") and " level=error " in stripped:
-            return True
-        if (
-            PROMTOOL_RULE_PATH in stripped
-            and any(error in stripped.lower() for error in candidate_read_errors)
-        ):
             return True
     return False
 
@@ -680,43 +666,20 @@ def _install_candidate(
 ):
     serialized = _serialize_candidate(source, document, fingerprint)
     destination = os.path.join(rules_directory, source.filename)
-    temporary_path = None
     try:
-        descriptor, temporary_path = tempfile.mkstemp(
-            dir=rules_directory,
-            prefix=".rule-",
-            suffix=".tmp",
-            text=True,
-        )
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        promtool_runner.check_rules(serialized)
+    except RuleValidationError as ex:
+        raise RuleValidationError(
+            f"{source.context}: promtool check rules failed: {ex}"
+        ) from ex
+
+    try:
+        with agent.safe_open(destination, "w", encoding="utf-8") as stream:
             stream.write(serialized)
-            stream.flush()
-            os.fchmod(stream.fileno(), 0o644)
-            os.fsync(stream.fileno())
-
-        try:
-            promtool_runner.check_rules(temporary_path)
-        except RuleValidationError as ex:
-            raise RuleValidationError(
-                f"{source.context}: promtool check rules failed: {ex}"
-            ) from ex
-
-        os.replace(temporary_path, destination)
-        temporary_path = None
     except OSError as ex:
         raise RuleInfrastructureError(
             f"cannot atomically install {destination}: {ex}"
         ) from ex
-    finally:
-        if temporary_path is not None:
-            try:
-                os.remove(temporary_path)
-            except FileNotFoundError:
-                pass
-            except OSError as ex:
-                raise RuleInfrastructureError(
-                    f"cannot remove temporary rule file {temporary_path}: {ex}"
-                ) from ex
 
 
 def _is_generated_rule_name(filename):
