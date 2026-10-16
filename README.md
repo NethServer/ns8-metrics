@@ -314,6 +314,44 @@ or that a container keeps restarting:
 changes(ns8_container_start_time_seconds{module_id="nethvoice-proxy1",container="kamailio"}[15m]) > 2
 ```
 
+#### Service down alert
+
+The built-in `ModuleServiceDown` alert fires when a service of a module
+has not been running for more than 10 minutes. It requires core 3.22.0 or
+later.
+
+Only the services a module lists are watched. A module lists them in the
+Redis hash:
+
+```text
+module/<module_id>/metrics_services
+```
+
+- field: the systemd unit name, for example `kamailio.service`;
+- value: the alert severity, `critical` or `warning`. An empty value means
+  `critical`.
+
+After changing the hash, the module must emit the
+`metrics-alert-rules-changed` event. For example:
+
+```sh
+redis-cli hset module/nethvoice-proxy1/metrics_services \
+  kamailio.service critical \
+  rtpengine.service warning
+redis-cli publish module/nethvoice-proxy1/event/metrics-alert-rules-changed '{}'
+```
+
+When a service is stopped on purpose, for example because a feature is
+disabled, remove its field and emit the event again.
+
+The alert carries the `module_id`, `node`, `unit`, and `severity` labels.
+It stays quiet while the node is offline (`NodeOffline` fires instead) or
+its container metrics collector is not updating.
+
+The list is saved as `ns8:module_service_expected` series in
+`rules.d/module_services.yml`. The alert compares them with
+`ns8_container_info`: a stopped container has no series there.
+
 ### Provisioning Grafana
 
 The Grafana service is configured to load all datasources and dashboards from the `datasources` and `dashboards` directories.

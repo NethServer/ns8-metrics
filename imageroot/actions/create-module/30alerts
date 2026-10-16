@@ -45,6 +45,30 @@ with open('rules.d/loki.yml', 'w') as f:
       description_it: "Loki raccoglie e archivia i log di sistema di tutti i nodi del cluster. Verificare le applicazioni Loki configurate nella pagina Impostazioni > Log di sistema."
 ''')
 
+# Write the services.yml file
+# Modules list the units to watch in module/<module_id>/metrics_services;
+# provision-prometheus turns the list into ns8:module_service_expected
+# series. A stopped container has no ns8_container_info series, so an
+# expected unit without one is down. The collector freshness check keeps
+# quiet when the node is offline (NodeOffline fires instead), when its
+# collector is stuck, and when the core is older than 3.22.0.
+with open('rules.d/services.yml', 'w') as f:
+    f.write('''groups:
+- name: Services
+  rules:
+  - alert: ModuleServiceDown
+    expr: |
+      ns8:module_service_expected
+        unless on (module_id, unit) ns8_container_info
+        and on (node) (time() - ns8_container_collector_last_success_timestamp_seconds < 300)
+    for: 10m
+    annotations:
+      summary_en: "Service {{ $labels.unit }} of {{ $labels.module_id }} is down (node {{ $labels.node }})"
+      summary_it: "Il servizio {{ $labels.unit }} di {{ $labels.module_id }} non è attivo (nodo {{ $labels.node }})"
+      description_en: "The {{ $labels.unit }} service of application {{ $labels.module_id }} on node {{ $labels.node }} has not been running for more than 10 minutes. Check the application status and its system logs."
+      description_it: "Il servizio {{ $labels.unit }} dell'applicazione {{ $labels.module_id }} sul nodo {{ $labels.node }} non è in esecuzione da più di 10 minuti. Verificare lo stato dell'applicazione e i log di sistema."
+''')
+
 # Write the memory.yml file
 with open('rules.d/memory.yml', 'w') as f:
     f.write('''groups:
