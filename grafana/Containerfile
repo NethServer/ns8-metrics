@@ -28,7 +28,7 @@ RUN fetch() { \
     && fetch grafana/metrics-drilldown grafana-metricsdrilldown-app "${METRICS_DRILLDOWN_VERSION}"
 
 # Stage 2: Grafana runtime
-FROM docker.io/grafana/grafana:13.2.3
+FROM docker.io/grafana/grafana:13.2.4
 COPY --from=plugins --chown=0:0 /plugins/ /usr/share/grafana/data/plugins-bundled/
 # The upstream image makes bundled plugins writable by anyone, and
 # Grafana deletes them when it installs a newer copy: make their
