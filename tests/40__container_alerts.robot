@@ -1,5 +1,5 @@
 *** Settings ***
-Documentation     Built-in container alert rules are loaded by Prometheus
+Documentation     Built-in OOM kill alert rules are loaded by Prometheus
 Library           SSHLibrary
 
 *** Variables ***
@@ -10,6 +10,10 @@ ${PROM_API}       http://127.0.0.1:9091/prometheus/api/v1
 Check Prometheus loads the ContainerOomKilled rule
     Wait Until Keyword Succeeds    60s    5s
     ...    Rule Should Be Healthy    ContainerOomKilled
+
+Check Prometheus loads the NodeOomKilled rule
+    Wait Until Keyword Succeeds    60s    5s
+    ...    Rule Should Be Healthy    NodeOomKilled
 
 *** Keywords ***
 Rule Should Be Healthy

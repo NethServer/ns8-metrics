@@ -1,8 +1,10 @@
-# Unit test for the built-in Containers rules.
+# Unit test for the built-in OOM kill rules: ContainerOomKilled and
+# NodeOomKilled.
 # Generate rules.d with imageroot/actions/create-module/30alerts, then run:
 #   promtool test rules tests/rules/containers_test.yml
 rule_files:
   - /rules/containers.yml
+  - /rules/memory.yml
 
 evaluation_interval: 1m
 
@@ -53,4 +55,56 @@ tests:
       # The kill is older than 15 minutes: the alert resolves
       - eval_time: 30m
         alertname: ContainerOomKilled
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      # Node 1: a container kill, collected one minute after the node
+      # counter. NodeOomKilled must not fire.
+      - series: 'node_vmstat_oom_kill{job="providers",target_type="node",node="1",instance="10.5.4.1:9100"}'
+        values: '0x10 1x30'
+      - series: 'ns8_container_oom_kills_total{job="providers",target_type="node",node="1",module="loki1",module_id="loki1",container="loki-server"}'
+        values: '0x11 1x29'
+      # Node 2: two kills, only one of them seen in a container counter,
+      # e.g. the other container died before collection
+      - series: 'node_vmstat_oom_kill{job="providers",target_type="node",node="2",instance="10.5.4.2:9100"}'
+        values: '0x10 2x30'
+      - series: 'ns8_container_oom_kills_total{job="providers",target_type="node",node="2",module="core",container="redis"}'
+        values: '0x11 1x29'
+      # Node 3: a kill and no container series at all
+      - series: 'node_vmstat_oom_kill{job="providers",target_type="node",node="3",instance="10.5.4.3:9100"}'
+        values: '0x10 1x30'
+    alert_rule_test:
+      # Still pending: the condition must hold for 3 minutes
+      - eval_time: 13m
+        alertname: NodeOomKilled
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: NodeOomKilled
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: providers
+              target_type: node
+              node: "2"
+              instance: "10.5.4.2:9100"
+            exp_annotations:
+              summary_en: "A process ran out of memory (node 2)"
+              summary_it: "Memoria esaurita per un processo (nodo 2)"
+              description_en: "In the last 15 minutes the kernel killed 1 process(es) on node 2 because they ran out of memory, and they cannot be linked to a running container. Check the node memory and the kernel log (journalctl -k)."
+              description_it: "Negli ultimi 15 minuti il kernel ha terminato 1 processo/i sul nodo 2 per memoria esaurita, senza poterli associare a un container attivo. Verificare la memoria del nodo e il log del kernel (journalctl -k)."
+          - exp_labels:
+              severity: critical
+              job: providers
+              target_type: node
+              node: "3"
+              instance: "10.5.4.3:9100"
+            exp_annotations:
+              summary_en: "A process ran out of memory (node 3)"
+              summary_it: "Memoria esaurita per un processo (nodo 3)"
+              description_en: "In the last 15 minutes the kernel killed 1 process(es) on node 3 because they ran out of memory, and they cannot be linked to a running container. Check the node memory and the kernel log (journalctl -k)."
+              description_it: "Negli ultimi 15 minuti il kernel ha terminato 1 processo/i sul nodo 3 per memoria esaurita, senza poterli associare a un container attivo. Verificare la memoria del nodo e il log del kernel (journalctl -k)."
+      # The kills are older than 15 minutes: the alert resolves
+      - eval_time: 30m
+        alertname: NodeOomKilled
         exp_alerts: []

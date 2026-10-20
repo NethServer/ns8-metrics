@@ -71,6 +71,21 @@ with open('rules.d/memory.yml', 'w') as f:
       summary_it: "Swap non configurato (nodo {{ $labels.node }})"
       description_en: "Swap is not configured on node {{ $labels.node }}."
       description_it: "Lo swap non è configurato sul nodo {{ $labels.node }}."
+
+  # Kills not explained by ContainerOomKilled: a process outside any
+  # container, or a container that died and was gone before its counter
+  # was collected. Both counters come from the same node_exporter scrape,
+  # but the container one is refreshed every minute: "for" absorbs the lag.
+  - alert: NodeOomKilled
+    expr: round(increase(node_vmstat_oom_kill[15m])) - on(node) group_left() (round(sum by(node) (increase(ns8_container_oom_kills_total[15m]))) or on(node) 0 * node_vmstat_oom_kill) > 0
+    for: 3m
+    labels:
+      severity: critical
+    annotations:
+      summary_en: "A process ran out of memory (node {{ $labels.node }})"
+      summary_it: "Memoria esaurita per un processo (nodo {{ $labels.node }})"
+      description_en: "In the last 15 minutes the kernel killed {{ $value }} process(es) on node {{ $labels.node }} because they ran out of memory, and they cannot be linked to a running container. Check the node memory and the kernel log (journalctl -k)."
+      description_it: "Negli ultimi 15 minuti il kernel ha terminato {{ $value }} processo/i sul nodo {{ $labels.node }} per memoria esaurita, senza poterli associare a un container attivo. Verificare la memoria del nodo e il log del kernel (journalctl -k)."
 ''')
 
 
