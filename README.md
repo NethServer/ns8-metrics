@@ -27,6 +27,7 @@ Available alerts:
 - SWAP is getting full
 - One ore more backups have failed
 - Paritions are getting full
+- A container process was killed because it ran out of memory (`ContainerOomKilled`, critical)
 
 By default, the system will send alerts only to Nethesis portals.
 Mail notifications can be enabled by setting the `mail_to` parameter, see the [Configure](#configure) section.

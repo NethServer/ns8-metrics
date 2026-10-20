@@ -1,0 +1,56 @@
+# Unit test for the built-in Containers rules.
+# Generate rules.d with imageroot/actions/create-module/30alerts, then run:
+#   promtool test rules tests/rules/containers_test.yml
+rule_files:
+  - /rules/containers.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      # Module container killed by the OOM killer
+      - series: 'ns8_container_oom_kills_total{job="providers",target_type="node",node="1",module="loki1",module_id="loki1",container="loki-server"}'
+        values: '0x10 1x20'
+      # Module container without OOM kills
+      - series: 'ns8_container_oom_kills_total{job="providers",target_type="node",node="1",module="loki1",module_id="loki1",container="traefik"}'
+        values: '0x30'
+      # Core container: module="core" and no module_id
+      - series: 'ns8_container_oom_kills_total{job="providers",target_type="node",node="1",module="core",container="redis"}'
+        values: '0x10 1x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ContainerOomKilled
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ContainerOomKilled
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: providers
+              target_type: node
+              node: "1"
+              module: loki1
+              module_id: loki1
+              container: loki-server
+            exp_annotations:
+              summary_en: "Container loki-server of loki1 ran out of memory (node 1)"
+              summary_it: "Memoria esaurita nel container loki-server di loki1 (nodo 1)"
+              description_en: "In the last 15 minutes the kernel killed a process of container loki-server (application loki1, node 1) because it ran out of memory. Check the node memory and the application logs."
+              description_it: "Negli ultimi 15 minuti il kernel ha terminato un processo del container loki-server (applicazione loki1, nodo 1) per memoria esaurita. Verificare la memoria del nodo e i log dell'applicazione."
+          - exp_labels:
+              severity: critical
+              job: providers
+              target_type: node
+              node: "1"
+              module: core
+              container: redis
+            exp_annotations:
+              summary_en: "Container redis of core ran out of memory (node 1)"
+              summary_it: "Memoria esaurita nel container redis di core (nodo 1)"
+              description_en: "In the last 15 minutes the kernel killed a process of container redis (application core, node 1) because it ran out of memory. Check the node memory and the application logs."
+              description_it: "Negli ultimi 15 minuti il kernel ha terminato un processo del container redis (applicazione core, nodo 1) per memoria esaurita. Verificare la memoria del nodo e i log dell'applicazione."
+      # The kill is older than 15 minutes: the alert resolves
+      - eval_time: 30m
+        alertname: ContainerOomKilled
+        exp_alerts: []

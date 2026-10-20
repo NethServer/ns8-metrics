@@ -200,3 +200,20 @@ with open('rules.d/tlscert.yml', 'w') as f:
       description_en: "The {{ $labels.module_id }} expired certificate {{ $labels.cn }} on node {{ $labels.node }} must be immediately renewed or removed from the TLS certificates page."
       description_it: "Il certificato scaduto {{ $labels.cn }} del modulo {{ $labels.module_id }} sul nodo {{ $labels.node }} deve essere immediatamente rinnovato o rimosso dalla pagina dei certificati TLS."
 ''')
+
+# Write the containers.yml file
+with open('rules.d/containers.yml', 'w') as f:
+    f.write('''groups:
+- name: Containers
+  rules:
+  - alert: ContainerOomKilled
+    expr: increase(ns8_container_oom_kills_total[15m]) > 0
+    for: 0m
+    labels:
+      severity: critical
+    annotations:
+      summary_en: "Container {{ $labels.container }} of {{ $labels.module }} ran out of memory (node {{ $labels.node }})"
+      summary_it: "Memoria esaurita nel container {{ $labels.container }} di {{ $labels.module }} (nodo {{ $labels.node }})"
+      description_en: "In the last 15 minutes the kernel killed a process of container {{ $labels.container }} (application {{ $labels.module }}, node {{ $labels.node }}) because it ran out of memory. Check the node memory and the application logs."
+      description_it: "Negli ultimi 15 minuti il kernel ha terminato un processo del container {{ $labels.container }} (applicazione {{ $labels.module }}, nodo {{ $labels.node }}) per memoria esaurita. Verificare la memoria del nodo e i log dell'applicazione."
+''')
