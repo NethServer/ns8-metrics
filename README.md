@@ -262,9 +262,10 @@ Alerts carrying `module_id` are grouped by Alertmanager using `alertname`,
 `node`, and `module_id`. This keeps same-name alerts from different module
 instances in separate notification groups.
 
-Critical alerts inhibit warning alerts only when both `alertname` and
-`module_id` match. Alerts without `module_id`, such as alerts generated from
-cluster-node targets, retain their previous grouping and inhibition behavior.
+Critical alerts inhibit warning alerts only when `alertname`, `module_id`,
+and `container` match. A critical `ModuleContainerDown` for one container
+does not hide a warning for another container of the same module. Alerts
+without `module_id`, such as alerts generated from cluster-node targets, retain their previous grouping and inhibition behavior.
 
 Generic downstream identifiers are also scoped by a non-empty `module_id`,
 preventing a resolved alert from one module instance from clearing a same-name
@@ -313,6 +314,45 @@ or that a container keeps restarting:
 ```promql
 changes(ns8_container_start_time_seconds{module_id="nethvoice-proxy1",container="kamailio"}[15m]) > 2
 ```
+
+#### Container down alert
+
+The built-in `ModuleContainerDown` alert fires when a container of a
+module has not been running for more than 10 minutes. It requires core
+3.22.0 or later.
+
+Only the containers a module lists are watched. A module lists them in the
+Redis hash:
+
+```text
+module/<module_id>/metrics_containers
+```
+
+- field: the container name, as in the `container` label of
+  `ns8_container_info`, for example `kamailio`;
+- value: the alert severity, `critical` or `warning`. An empty value means
+  `critical`.
+
+After changing the hash, the module must emit the
+`metrics-alert-rules-changed` event. For example:
+
+```sh
+redis-cli hset module/nethvoice-proxy1/metrics_containers \
+  kamailio critical \
+  rtpengine warning
+redis-cli publish module/nethvoice-proxy1/event/metrics-alert-rules-changed '{}'
+```
+
+When a container is stopped on purpose, for example because a feature is
+disabled, remove its field and emit the event again.
+
+The alert carries the `module_id`, `node`, `container`, and `severity`
+labels. It stays quiet while the node is offline (`NodeOffline` fires
+instead) or its container metrics collector is not updating.
+
+The list is saved as `ns8:module_container_expected` series in
+`rules.d/module_containers.yml`. The alert compares them with
+`ns8_container_info`: a stopped container has no series there.
 
 ### Provisioning Grafana
 

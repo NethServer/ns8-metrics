@@ -8,6 +8,7 @@
 import fcntl
 import json
 import os
+import re
 import sys
 import urllib.parse
 from collections.abc import Mapping
@@ -37,13 +38,18 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
         {
         'source_matchers': ['severity="critical"'],
         'target_matchers': ['severity="warning"'],
-        # A critical alert must inhibit warnings only for the same provider.
-        'equal': ['alertname', 'module_id']
+        # A critical alert must inhibit warnings only for the same provider
+        # and, for per-container alerts like ModuleContainerDown, the same
+        # container. Alerts without a container label still match each other.
+        'equal': ['alertname', 'module_id', 'container']
         }
     ],
     'receivers': [{'name': 'default-receiver'}],
     'templates': ["/etc/alertmanager/templates/*.tmpl"]
 }
+
+# Unanchored: Prometheus anchors relabel regexes, Python uses fullmatch.
+MODULE_ID_REGEX = '[a-z][a-z0-9-]*[0-9]+'
 
 # Node targets export per-module series, like ns8_container_* and
 # ns8_module_*_bytes, labeled "module". Copy it to "module_id", the label
@@ -51,9 +57,18 @@ ALERT_MANAGER_DEFAULT_CONFIG = {
 # "core" and "unknown" series stay without module_id.
 NODE_MODULE_ID_RELABEL = {
     'source_labels': ['target_type', 'module_id', 'module'],
-    'regex': 'node;;([a-z][a-z0-9-]*[0-9]+)',
+    'regex': f'node;;({MODULE_ID_REGEX})',
     'target_label': 'module_id',
 }
+
+# Modules list the containers that must keep running in this Redis hash:
+# field = container name, value = alert severity (empty means critical).
+MODULE_CONTAINERS_KEY_PATTERN = 'module/*/metrics_containers'
+MODULE_CONTAINERS_RULES_FILE = 'rules.d/module_containers.yml'
+MODULE_ID_PATTERN = re.compile(MODULE_ID_REGEX)
+# Podman container name rule
+CONTAINER_NAME_PATTERN = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]*')
+CONTAINER_SEVERITIES = {'critical', 'warning'}
 
 # Prometheus adds /api/v2/alerts to this path
 MIMIR_ALERTMANAGER_PATH = '/collect/api/services/mimir/alertmanager'
@@ -330,6 +345,55 @@ def generate_custom_alertmanager_rules(redis_client):
         except:
             pass
 
+def read_module_containers(redis_client, module_nodes):
+    """Return the expected containers as a sorted list of label mappings."""
+    containers = []
+    for key in redis_client.scan_iter(MODULE_CONTAINERS_KEY_PATTERN):
+        parts = key.split('/')
+        if len(parts) != 3 or not MODULE_ID_PATTERN.fullmatch(parts[1]):
+            print(f"Skipped container hash {key!r}: invalid module ID", file=sys.stderr)
+            continue
+        module_id = parts[1]
+        # The node label lets the alert check that the node is reachable
+        # and its container collector is fresh.
+        node_id = module_nodes.get(module_id)
+        if not node_id:
+            print(f"Skipped container hash {key!r}: module node is unknown", file=sys.stderr)
+            continue
+        for container, severity in redis_client.hgetall(key).items():
+            severity = severity or 'critical'
+            if not CONTAINER_NAME_PATTERN.fullmatch(container):
+                print(f"Skipped container {container!r} at Redis key {key!r}: invalid name", file=sys.stderr)
+                continue
+            if severity not in CONTAINER_SEVERITIES:
+                print(f"Skipped container {container!r} at Redis key {key!r}: severity {severity!r} is not one of {sorted(CONTAINER_SEVERITIES)}", file=sys.stderr)
+                continue
+            containers.append({
+                'module_id': module_id,
+                'node': node_id,
+                'container': container,
+                'severity': severity,
+            })
+    return sorted(containers, key=lambda labels: (labels['module_id'], labels['container']))
+
+def generate_module_containers_rules(redis_client):
+    # The ModuleContainerDown alert (see create-module/30alerts) compares
+    # these constant series with the running containers: a stopped
+    # container has no ns8_container_info series at all.
+    module_nodes = redis_client.hgetall('cluster/module_node') or {}
+    rules = [
+        {'record': 'ns8:module_container_expected', 'expr': 'vector(1)', 'labels': labels}
+        for labels in read_module_containers(redis_client, module_nodes)
+    ]
+    if rules:
+        document = {'groups': [{'name': 'Module containers', 'rules': rules}]}
+        write_file_atomic(MODULE_CONTAINERS_RULES_FILE, yaml.safe_dump(document, sort_keys=False))
+    else:
+        try:
+            os.remove(MODULE_CONTAINERS_RULES_FILE)
+        except FileNotFoundError:
+            pass
+
 def generate_custom_alertmanager_templates(redis_client):
     # Custom template declarations are concatenated in the same file:
     templates = redis_client.hvals(f'module/{os.environ["MODULE_ID"]}/custom_templates')
@@ -373,6 +437,7 @@ def provision():
         )
     generate_custom_alertmanager_rules(redis_client)
     generate_custom_alertmanager_templates(redis_client)
+    generate_module_containers_rules(redis_client)
 
 # Keep helper functions importable without connecting to Redis during tests.
 if __name__ == '__main__':
