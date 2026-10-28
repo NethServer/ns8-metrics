@@ -34,5 +34,6 @@
 Also:
 
 - The configuration UI for this NS8 module is implemented in NethServer/ns8-core repository on GitHub
+- **Developer docs**: the module developer page `docs/modules/metrics.md` in NethServer/ns8-core links to sections of this README. When changing how modules integrate with metrics (alert rules, scrape targets, per-module series, Redis keys, events) or renaming a linked README heading, update that page in the same change set.
 - **Branch names**: never use "/" in branch names. Use only chars allowed by container registry tags, like "-" and alphanumeric chars. This is a requirement for container image uploads.
 - **Commits**: Use conventional commit style. Short title line, 50 chars max. Briefly explain commit rationale in one/two paragraphs, wrap body text at column 72.
