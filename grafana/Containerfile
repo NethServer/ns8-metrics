@@ -8,7 +8,7 @@
 # plugins shipped with this image.
 
 # Stage 1: download and verify the app packages
-FROM docker.io/library/alpine:3.24.2 AS plugins
+FROM docker.io/library/alpine:3.24.3 AS plugins
 # Integrity and Grafana compatibility of the packages are checked after
 # the build, by build-images.sh (check-plugins.sh)
 # renovate: datasource=github-releases depName=grafana/logs-drilldown
