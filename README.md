@@ -156,8 +156,15 @@ Rules with invalid YAML are skipped: if the rule does not appear to be
 loaded, inspect the module log on the Logs page, searching for
 `Skipped custom rule`.
 
+Custom rules are not included in any backup: neither the module data
+backup nor the cluster configuration backup saves them. After a disaster
+recovery, load them again. They are preserved only when the leader node
+is switched.
+
 Modules ship their own rules in a different way, see the
 [metrics-alert-rules-changed event](#metrics-alert-rules-changed-event).
+A module that provides its own rules publishes them again when it is
+restored, so they don't need a backup.
 
 
 ### Customize alert mail template
