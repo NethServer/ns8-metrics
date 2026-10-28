@@ -106,10 +106,40 @@ annotations:
       LABELS = {{ $labels }}
 ```
 
+Custom rules are not scoped to a module: they evaluate all series. To
+alert on a single module, add a `module_id` matcher to the expression,
+for example:
+
+```yaml
+expr: absent(ns8_container_info{module_id="ldapproxy1",unit="ldapproxy.service"})
+```
+
+See [Per-module node series](#per-module-node-series) for the series
+available for every module.
+
+Before loading the rule, check it with `promtool`. A rule with valid YAML
+but an invalid expression prevents Prometheus from starting, stopping
+all alerts, including the built-in ones:
+
+    { printf 'groups:\n- name: check\n  rules:\n  -\n'; grep -v '^---$' myalert1.yml | sed 's/^/    /'; } | \
+      runagent -m metrics1 podman exec -i prometheus promtool check rules
+
 Load the configuration into Redis by reading it from the file
 `myalert1.yml`:
 
     redis-cli -x hset module/metrics1/custom_alerts myalert1 <myalert1.yml
+    runagent -m metrics1 systemctl --user restart prometheus
+
+The restart command succeeds even if Prometheus fails to start, so check
+that the service is still active after a few seconds:
+
+    runagent -m metrics1 systemctl --user is-active prometheus
+
+If the service is `failed`, the module log reports the rule that
+Prometheus could not parse. Remove that rule and start Prometheus again:
+
+    redis-cli hdel module/metrics1/custom_alerts myalert1
+    runagent -m metrics1 systemctl --user reset-failed prometheus
     runagent -m metrics1 systemctl --user restart prometheus
 
 To remove the custom alert, run the following command and restart
@@ -118,8 +148,13 @@ Prometheus:
     redis-cli hdel module/metrics1/custom_alerts myalert1
     runagent -m metrics1 systemctl --user restart prometheus
 
-If the rule does not appear to be loaded, inspect the module log on the
-Logs page, searching for YAML parse errors.
+If the alert of a removed rule was firing, it is not resolved: it expires
+after about 4 minutes, both in Alertmanager and, when alert forwarding is
+enabled, in my.nethesis.it.
+
+Rules with invalid YAML are skipped: if the rule does not appear to be
+loaded, inspect the module log on the Logs page, searching for
+`Skipped custom rule`.
 
 Modules ship their own rules in a different way, see the
 [metrics-alert-rules-changed event](#metrics-alert-rules-changed-event).
