@@ -77,10 +77,7 @@ configuration is needed.
 Community (`nscom`) clusters do not forward alerts. Alerts sent straight to
 the local Alertmanager, like `test-alert`, are not forwarded.
 
-### Customimze alert rules (experimental)
-
-**This is an experimental feature, do not use in production.**
-Configuration may change on the future releases.
+### Customize alert rules
 
 All alert rules are defined in the `rules.d` directory. Files can't be
 modified directly and will be overwritten upon module update.
@@ -124,11 +121,11 @@ Prometheus:
 If the rule does not appear to be loaded, inspect the module log on the
 Logs page, searching for YAML parse errors.
 
+Modules ship their own rules in a different way, see the
+[metrics-alert-rules-changed event](#metrics-alert-rules-changed-event).
 
-### Customize alert mail template (experimental)
 
-**This is an experimental feature, do not use in production.**
-Configuration may change on the future releases.
+### Customize alert mail template
 
 First, create a template file, for example `myalert.tmpl`. Make sure to
 define `myalert_subject` and `myalert_html` sections, as they are
@@ -255,6 +252,67 @@ prometheus.d/provision_<publisher_id>_<target_type>.yml
 
 After adding, updating, or removing a target, the publisher must emit the
 `metrics-target-changed` event.
+
+#### metrics-alert-rules-changed event
+
+A module can ship its own alert rules. Prometheus loads them from:
+
+```text
+module/<publisher_id>/metrics_alert_rules
+```
+
+The Redis hash contains:
+
+- field `<rule_set_name>`, a stable name for the rule set, made of ASCII
+  letters, digits, `.`, `_` and `-`;
+- value `<yaml_config>`, either a single alert rule or a Prometheus rule
+  file with a `groups` list.
+
+Only alert rules are supported: recording rules are rejected. Group names
+must not start with the reserved `ns8:` prefix.
+
+The publisher ID from the Redis key is authoritative. For every rule,
+provisioning:
+
+- sets the `module_id` matcher on every selector of `expr`, so the rule
+  sees only the metrics of the publisher;
+- sets the `module_id` label of the alert to `<publisher_id>`;
+- prefixes group names with `ns8:<publisher_id>:<rule_set_name>`.
+
+Conflicting `module_id` values are replaced and reported in the log. An
+expression without any selector, like `vector(1)`, is rejected.
+
+A warning is also logged when a rule has no `severity` label (use
+`warning` or `critical`) or lacks one of the `summary_en`, `summary_it`,
+`description_en` and `description_it` annotations.
+
+Each rule set is checked with `promtool` on its own. A broken rule set
+never blocks the others, and its last working version stays active. Rule
+sets that did not change are not checked again. Rules of removed modules
+are deleted.
+
+The generated rules are saved as:
+
+```text
+rules.d/provision_<publisher_id>_<rule_set_name>.yml
+```
+
+For example, publish a rule that fires when the only container of
+`openldap1` stops:
+
+```sh
+redis-cli HSET module/openldap1/metrics_alert_rules openldap-down '{alert: OpenldapDown, expr: "absent(ns8_container_info{unit=\"openldap.service\"})", for: 5m, labels: {severity: critical}, annotations: {summary_en: "OpenLDAP is down", summary_it: "OpenLDAP non è attivo", description_en: "The OpenLDAP container is not running", description_it: "Il container di OpenLDAP non è in esecuzione"}}'
+redis-cli PUBLISH module/openldap1/event/metrics-alert-rules-changed '{}'
+```
+
+After adding, updating, or removing a rule set, the publisher must emit
+the `metrics-alert-rules-changed` event. Prometheus reloads its rules
+without a restart. The rules are reloaded also when a module is removed.
+If a rule does not appear in Prometheus, search the module log for
+warnings about `metrics_alert_rules`.
+
+See [Per-module node series](#per-module-node-series) for the series a
+module can use to alert on its own containers.
 
 #### Provider alert identity
 
