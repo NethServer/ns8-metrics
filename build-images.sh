@@ -23,7 +23,7 @@ buildah add "${container}" imageroot /imageroot
 buildah add "${container}" ui/ /ui
 # Setup the entrypoint, ask to reserve one TCP port with the label and set a rootless container
 buildah config --entrypoint=/ \
-    --label="org.nethserver.authorizations=traefik@any:routeadm" \
+    --label="org.nethserver.authorizations=traefik@node:routeadm" \
     --label="org.nethserver.rootfull=0" \
     --label="org.nethserver.max-per-node=1" \
     --label='org.nethserver.flags=core_module no_data_backup' \
