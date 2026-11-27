@@ -68,7 +68,9 @@ Discover Rule Publishers And Prometheus
     ${path} =    Run Command
     ...    runagent -m ${METRICS_ID} python3 -c 'import os; print(os.environ.get("PROMETHEUS_PATH", ""))'
     ${prefix} =    Evaluate    urllib.parse.quote($path.strip('/'), safe='/')    modules=urllib.parse
-    ${base_url} =    Evaluate    ('http://127.0.0.1:9091/' + $prefix).rstrip('/')
+    ${pw} =    Run Command    runagent -m ${METRICS_ID} python3 -c "import json;print(json.load(open('basic_auth.json'))['password'])"
+    # The password is URL-safe: it fits in the URL
+    ${base_url} =    Evaluate    ('http://metrics:' + $pw + '@127.0.0.1:9091/' + $prefix).rstrip('/')
     Set Suite Variable    ${PROMETHEUS_URL}    ${base_url}
 
 Initialize Rule Fixtures

@@ -1,12 +1,10 @@
 *** Settings ***
 Documentation     Per-module series from node targets get the module_id label
 Library           SSHLibrary
-Suite Setup       Skip If The Core Has No Container Metrics
+Suite Setup       Prepare The Suite
 
 *** Variables ***
 ${MID}            metrics1
-# Suite 10 sets prometheus_path=prometheus
-${PROM_API}       http://127.0.0.1:9091/prometheus/api/v1
 
 *** Test Cases ***
 Check Prometheus loads the module_id relabel rule
@@ -26,6 +24,12 @@ Check core containers do not carry module_id
     Should Be Equal As Integers    ${count}    0
 
 *** Keywords ***
+Prepare The Suite
+    Skip If The Core Has No Container Metrics
+    ${pw} =    Execute Command    runagent -m ${MID} python3 -c "import json;print(json.load(open('basic_auth.json'))['password'])"
+    # The password is URL-safe: it fits in the URL
+    Set Suite Variable    ${PROM_API}    http://metrics:${pw}@127.0.0.1:9091/api/v1
+
 Skip If The Core Has No Container Metrics
     # ns8_container_* series come with core 3.22.0
     ${rc} =    Execute Command    test -x /var/lib/nethserver/node/bin/refresh-container-metrics

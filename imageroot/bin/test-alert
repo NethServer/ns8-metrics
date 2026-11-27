@@ -2,6 +2,12 @@
 
 name=fooAlert-$RANDOM
 url='http://localhost:9093/api/v2/alerts'
+# Alertmanager requires basic auth. Run from the module state directory,
+# as runagent does. The credentials reach curl through stdin, never argv.
+creds=$(python3 -c 'import json; c = json.load(open("basic_auth.json")); print(c["username"] + ":" + c["password"])') || exit 1
+curl_auth() {
+  printf 'user = "%s"\n' "$creds" | curl --config - -sS -w '\nHTTP %{http_code}\n' "$@"
+}
 bold=$(tput bold)
 normal=$(tput sgr0)
 
@@ -31,7 +37,7 @@ EOF
 echo "${bold}Firing alert ${name} ${normal}"
 printf -v startsAt ',"startsAt" : "%s"' $(date --rfc-3339=seconds | sed 's/ /T/')
 POSTDATA=$(generate_post_data 'firing' "${startsAt}")
-curl -H "Content-Type: application/json" $url --data "$POSTDATA" --trace-ascii /dev/stdout
+curl_auth -H "Content-Type: application/json" $url --data "$POSTDATA"
 echo -e "\n"
 
 echo "Sleeping to simulate the alert resolution"
@@ -40,5 +46,5 @@ sleep 30
 echo "${bold}Sending resolved ${normal}"
 printf -v endsAt ',"endsAt" : "%s"' $(date --rfc-3339=seconds | sed 's/ /T/')
 POSTDATA=$(generate_post_data 'firing' "${startsAt}" "${endsAt}")
-curl $url -H "Content-Type: application/json" --data "$POSTDATA" --trace-ascii /dev/stdout
+curl_auth $url -H "Content-Type: application/json" --data "$POSTDATA"
 echo -e "\n"

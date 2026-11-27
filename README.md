@@ -38,8 +38,7 @@ The module is automatically installed by the cluster initialization script.
 ## Configure
 
 Launch `configure-module`, by setting the following parameters:
-- `prometheus_path`: path to access Prometheus web UI, if left blank Prometheus will be not exposed; if enabled, you can authenticate with the same
-   credentials used to access the `/cluster-admin` web UI
+- `prometheus_path`: ignored, kept for compatibility; Prometheus is not exposed, see [Prometheus web interface (debug)](#prometheus-web-interface-debug)
 - `grafana_path`: path to access Grafana web UI, if left blank grafana will be stopped; if enabled, you can authenticate with the same
    credentials used to access the `/cluster-admin` web UI
 - `mail_to`: list of email addresses to receive critical alerts, this requires that mail notifications are enabled at cluster level
@@ -48,7 +47,7 @@ Launch `configure-module`, by setting the following parameters:
 
 Example:
 
-    api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_to": ["alert@example.org"], "mail_from": "no-reply@example.org", "mail_template": ""}'
+    api-cli run module/metrics1/configure-module --data '{"grafana_path": "grafana", "mail_to": ["alert@example.org"], "mail_from": "no-reply@example.org", "mail_template": ""}'
 
 You can send a test alert to verify the mail configuration:
 
@@ -62,6 +61,9 @@ Configuration files are saved inside the state directory. The most important fil
 - alertmanager.yml: Alertmanager configuration
   - templates.d: directory containing custom alert templates
 - local.yml: Grafana configuration, if enabled
+- basic_auth.json: password of the local Prometheus and Alertmanager endpoints, generated once and not regenerated, see [Local credentials](#local-credentials)
+- web-config.yml: Prometheus and Alertmanager web configuration with the password hash
+- grafana-jwt.pub: public key used by Grafana to check the api-server token, see [Grafana authentication](#grafana-authentication)
 
 ### Forwarding alerts to my.nethesis.it
 
@@ -212,7 +214,7 @@ redis-cli -x hset module/metrics1/custom_templates myalert <myalert.tmpl
 
 Configure the module to use the new template:
 ```
-api-cli run module/metrics1/configure-module --data '{"prometheus_path": "prometheus", "grafana_path": "grafana", "mail_from": "no-reply@example.org", "mail_to": ["alert@example.org"], "mail_template": "myalert"}'
+api-cli run module/metrics1/configure-module --data '{"grafana_path": "grafana", "mail_from": "no-reply@example.org", "mail_to": ["alert@example.org"], "mail_template": "myalert"}'
 ```
 
 You can test the template rendering using the following command:
@@ -419,6 +421,16 @@ changes(ns8_container_start_time_seconds{module_id="nethvoice-proxy1",container=
 The Grafana service is configured to load all datasources and dashboards from the `datasources` and `dashboards` directories.
 The service must be restarted when a new datasource or dashboard is added or removed.
 
+### Grafana authentication
+
+Grafana accepts only the `X-Auth-Token` header, a short-lived JWT signed
+by the cluster `api-server` that Traefik forward auth adds to each request
+(`[auth.jwt]`). At every start `provision-grafana` fetches the public key
+from the local api-server and writes `grafana-jwt.pub`. The key never
+changes: if it cannot be fetched (for instance at boot, before the
+api-server listens) the existing file is kept; the start fails only if
+there is no file yet.
+
 ### Dashboards
 
 Dashboards are defined in JSON format. The module provides 2 types of dashboards:
@@ -549,6 +561,62 @@ To revert to the defaults, remove the variable:
 runagent -m metrics1 python3 -c 'import agent ; agent.unset_env("PODMAN_RUN_OPTS")'
 runagent -m metrics1 systemctl --user restart grafana.service
 ```
+
+### Prometheus web interface (debug)
+
+Prometheus is not exposed through Traefik. It listens on `127.0.0.1:9091`
+of the leader node and asks for the password described in
+[Local credentials](#local-credentials). For debugging, the simplest way is
+an SSH tunnel:
+
+```bash
+ssh -L 9091:127.0.0.1:9091 root@<leader>
+```
+
+Then open `http://127.0.0.1:9091` and log in as `metrics`.
+
+Alternatively, add a temporary Traefik route by hand, on a dedicated host
+name that resolves to the leader node (a host-based route is needed because
+Prometheus serves at the root path). The Prometheus password protects it.
+Remove it after use. `traefik1` and `metrics1` are the instances on the
+leader node:
+
+```bash
+api-cli run module/traefik1/set-route --data '{"instance": "metrics1_prometheus_debug", "url": "http://127.0.0.1:9091", "host": "prometheus.example.org", "http2https": true, "lets_encrypt": false}'
+api-cli run module/traefik1/delete-route --data '{"instance": "metrics1_prometheus_debug"}'
+```
+
+### Local credentials
+
+Prometheus on `127.0.0.1:9091` and Alertmanager on `127.0.0.1:9093` require
+HTTP basic authentication, user `metrics`. The password is generated once
+and stored in `basic_auth.json` in the module state directory, readable only
+by the module user. Print it with (`runagent` runs in the module state
+directory):
+
+```bash
+runagent -m metrics1 cat basic_auth.json
+```
+
+Core runs as root on the same node: its `list-alerts` action reads this
+file and asks Alertmanager for the active alerts. Do not rename the file or
+its `username` and `password` keys.
+
+To change the password, delete `basic_auth.json` and restart the services:
+
+```bash
+runagent -m metrics1 rm -f basic_auth.json
+runagent -m metrics1 systemctl --user restart prometheus.service alertmanager.service grafana.service
+```
+
+### Upgrade notes
+
+- Prometheus on `127.0.0.1:9091` and Alertmanager on `127.0.0.1:9093`
+  require the password above.
+- Hand-made Loki alert rules no longer reach Alertmanager, because they
+  cannot send the password.
+- The `/prometheus` route is removed on update.
+- Requires core 3.26.0 or later.
 
 ## Testing
 

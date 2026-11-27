@@ -8,20 +8,26 @@
 import os
 import sys
 import agent
+import metrics_basic_auth
 import json
 import yaml
 import shutil
+import urllib.request
 import configparser
 from collections import OrderedDict
 
 # Ensure grafana.ini disables the internal login form and basic auth so that
-# authentication is exclusively handled by the Traefik proxy (X-AUTH-USER header).
+# authentication is exclusively handled by Traefik forward auth, which hands
+# Grafana a signed token (X-Auth-Token, see [auth.jwt]).
 # This block runs at every Grafana startup, fixing both new and existing installs.
 grafana_ini_path = '../etc/grafana.ini'
 gcfg = configparser.RawConfigParser()
 gcfg.read(grafana_ini_path)
 changed = False
-for section, key, value in [('auth', 'disable_login_form', 'true'), ('auth.basic', 'enabled', 'false')]:
+# Grafana accepts only tokens signed by the api-server, for this module.
+expect_claims = json.dumps({"iss": "ns8-api-server", "aud": f"module/{os.environ['MODULE_ID']}"}, separators=(",", ":"))
+for section, key, value in [('auth', 'disable_login_form', 'true'), ('auth.basic', 'enabled', 'false'),
+                            ('auth.jwt', 'expect_claims', expect_claims)]:
     if not gcfg.has_section(section):
         gcfg.add_section(section)
     if gcfg.get(section, key, fallback=None) != value:
@@ -33,6 +39,22 @@ if changed:
 
 # Read prometheus leader node
 rdb = agent.redis_connect(use_replica=True)
+
+# Public key to check the api-server login token. It never changes: if the
+# api-server is not up yet (boot), keep the existing file.
+try:
+    with urllib.request.urlopen('http://127.0.0.1:9311/api/module-token-pubkey', timeout=10) as resp:
+        pubkey = resp.read().decode()
+    if not pubkey.startswith('-----BEGIN PUBLIC KEY-----'):
+        raise ValueError("invalid public key")
+    with open('grafana-jwt.pub', 'w') as fp:
+        fp.write(pubkey)
+except Exception as ex:
+    if not os.path.exists('grafana-jwt.pub'):
+        sys.exit(f"Cannot fetch the token public key from the local api-server: {ex}")
+    print(f"Warning: cannot fetch the token public key, keeping the existing one: {ex}", file=sys.stderr)
+# Public key: the Grafana container user must read it
+os.chmod('grafana-jwt.pub', 0o644)
 
 # Read loki config from Redis
 loki = agent.resolve_agent_id("loki@cluster")
@@ -48,6 +70,9 @@ if os.path.exists(local_yml_path):
 
 os.makedirs("datasources", exist_ok=True)
 
+# Prometheus and Alertmanager require basic auth
+creds = metrics_basic_auth.ensure_credentials()
+
 with open('datasources/local.yml', 'w') as fp:
     fp.write("apiVersion: 1\n")
     fp.write("prune: true\n")
@@ -57,8 +82,13 @@ with open('datasources/local.yml', 'w') as fp:
     fp.write('    uid: prometheus\n')
     fp.write('    access: proxy\n')
     fp.write(f'    url: http://127.0.0.1:9091/{prometheus_path}\n')
+    fp.write('    basicAuth: true\n')
+    # JSON strings are valid YAML scalars: no quoting surprises
+    fp.write(f'    basicAuthUser: {json.dumps(creds["username"])}\n')
     fp.write('    jsonData:\n')
     fp.write('      timeInterval: 1m\n')
+    fp.write('    secureJsonData:\n')
+    fp.write(f'      basicAuthPassword: {json.dumps(creds["password"])}\n')
 
     fp.write('  - name: Local Loki\n')
     fp.write('    type: loki\n')
@@ -74,9 +104,18 @@ with open('datasources/local.yml', 'w') as fp:
     fp.write('    type: alertmanager\n')
     fp.write('    url: http://127.0.0.1:9093\n')
     fp.write('    access: proxy\n')
+    fp.write('    basicAuth: true\n')
+    fp.write(f'    basicAuthUser: {json.dumps(creds["username"])}\n')
     fp.write('    jsonData:\n')
     fp.write('      implementation: prometheus\n')
     fp.write('      handleGrafanaManagedAlerts: true\n')
+    fp.write('    secureJsonData:\n')
+    fp.write(f'      basicAuthPassword: {json.dumps(creds["password"])}\n')
+
+# The file holds passwords but the Grafana container user is mapped to "other"
+# and must read it: keep it world-readable, the 0700 module home keeps host
+# users out.
+os.chmod('datasources/local.yml', 0o644)
 
 
 # Delete all files datasources/provision_*.yml
