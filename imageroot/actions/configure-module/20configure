@@ -10,7 +10,6 @@ import sys
 import json
 
 import agent
-import agent.tasks
 
 def save_config(request):
     rdb = agent.redis_connect(privileged=True)
@@ -20,64 +19,4 @@ def save_config(request):
 
 request = json.load(sys.stdin)
 
-prometheus_path = request.get('prometheus_path', '').strip('/')
-grafana_path = request.get('grafana_path', '').strip('/')
-http_basic_auth_url = f"http://127.0.0.1:9311/api/module/{os.environ['MODULE_ID']}/http-basic/authorize-metrics"
-
 save_config(request.copy())
-
-# Configure Traefik to route prometheus path requests to the prometheus service
-if prometheus_path:
-    agent.set_env("PROMETHEUS_PATH", prometheus_path)
-    response = agent.tasks.run(
-        agent_id=agent.resolve_agent_id('traefik@node'),
-        action='set-route',
-        data={
-            'instance': os.environ['MODULE_ID'] + '_prometheus',
-            'url': 'http://127.0.0.1:9091',
-            'http2https': True,
-            'path': f'/{prometheus_path}',
-            "forward_auth": {
-                "address": http_basic_auth_url,
-                "auth_response_headers": [ "X-Auth-User" ]
-            }
-        },
-    )
-else:
-    # Remove traefik route
-    agent.set_env("PROMETHEUS_PATH", "")
-    response = agent.tasks.run(
-        agent_id=agent.resolve_agent_id('traefik@node'),
-        action='delete-route',
-        data={
-            'instance': os.environ['MODULE_ID'] + '_prometheus'
-        },
-    )
-
-# Configure Traefik to route grafana path requests to the grafana service
-if grafana_path:
-    agent.set_env("GRAFANA_PATH", grafana_path)
-    response = agent.tasks.run(
-        agent_id=agent.resolve_agent_id('traefik@node'),
-        action='set-route',
-        data={
-            'instance': os.environ['MODULE_ID'] + '_grafana',
-            'url': 'http://127.0.0.1:3000',
-            'http2https': True,
-            'path': f'/{grafana_path}',
-            "forward_auth": {
-                "address": http_basic_auth_url,
-                "auth_response_headers": [ "X-Auth-User" ]
-            }
-        },
-    )
-else:
-    # Remove traefik route
-    agent.set_env("GRAFANA_PATH", "")
-    response = agent.tasks.run(
-        agent_id=agent.resolve_agent_id('traefik@node'),
-        action='delete-route',
-        data={
-            'instance': os.environ['MODULE_ID'] + '_grafana'
-        },
-    )

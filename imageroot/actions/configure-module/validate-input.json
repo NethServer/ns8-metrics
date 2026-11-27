@@ -5,7 +5,6 @@
     "description": "Configure metrics stack",
     "examples": [
         {
-            "prometheus_path": "prometheus",
             "grafana_path": "grafana",
             "mail_to": [
                 "alert@nethserver.org"
@@ -16,15 +15,9 @@
     ],
     "type": "object",
     "required": [
-        "prometheus_path",
         "grafana_path"
     ],
     "properties": {
-        "prometheus_path": {
-            "type": "string",
-            "description": "Path to access prometheus interface, like 'prometheus'. Prometheus will be available at https://<hostname>/<prometheus_path>. If empty, prometheus will not be accessible.",
-            "format": "string"
-        },
         "grafana_path": {
             "type": "string",
             "description": "Path to access grafana interface, like 'grafana'. Grafana will be available at https://<hostname>/<grafana_path>. If empty, grafana will not run.",

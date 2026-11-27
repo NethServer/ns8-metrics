@@ -5,13 +5,11 @@
     "description": "Get metrics configuration",
     "examples": [
         {
-            "prometheus_path": null,
             "grafana_path": null,
             "mail_to": [],
             "mail_from": null
         },
         {
-            "prometheus_path": "prometheus",
             "grafana_path": "grafana",
             "mail_to": [ "alert@nethserver.org" ],
             "mail_from": "no-reply@nethserver.org"

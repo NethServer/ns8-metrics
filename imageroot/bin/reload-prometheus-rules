@@ -5,14 +5,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 
-import os
+import base64
 import subprocess
 import sys
 import time
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from enum import Enum
+
+import metrics_basic_auth
 
 
 PROMETHEUS_ORIGIN = "http://127.0.0.1:9091"
@@ -38,17 +39,6 @@ class LoadStatus(Enum):
     INCONCLUSIVE = "inconclusive"
 
 
-def prometheus_base_url(prometheus_path=None):
-    if prometheus_path is None:
-        prometheus_path = os.environ.get("PROMETHEUS_PATH", "")
-    normalized_path = str(prometheus_path).strip("/")
-    if not normalized_path:
-        return PROMETHEUS_ORIGIN
-    return PROMETHEUS_ORIGIN + "/" + urllib.parse.quote(
-        normalized_path, safe="/"
-    )
-
-
 class PrometheusClient:
     def __init__(
         self,
@@ -56,14 +46,17 @@ class PrometheusClient:
         opener=urllib.request.urlopen,
         timeout=HTTP_TIMEOUT_SECONDS,
     ):
-        self.base_url = (base_url or prometheus_base_url()).rstrip("/")
+        self.base_url = (base_url or PROMETHEUS_ORIGIN).rstrip("/")
         self.opener = opener
         self.timeout = timeout
+        creds = metrics_basic_auth.ensure_credentials()
+        token = base64.b64encode(f"{creds['username']}:{creds['password']}".encode()).decode()
+        self.authorization = "Basic " + token
 
     def reload_state(self):
         request = urllib.request.Request(
             self.base_url + "/metrics",
-            headers={"Accept": "text/plain"},
+            headers={"Accept": "text/plain", "Authorization": self.authorization},
         )
         try:
             with self.opener(request, timeout=self.timeout) as response:

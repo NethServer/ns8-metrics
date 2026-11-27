@@ -24,6 +24,7 @@ ExecStart=/usr/bin/podman run \
     --volume=%E/etc/dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:z \
     --volume=%E/state/dashboards/:/etc/grafana/dashboards:z \
     --volume=%E/etc/grafana.ini:/etc/grafana/grafana.ini:z \
+    --volume=%E/state/grafana-jwt.pub:/etc/grafana/ns8-jwt.pub:ro,z \
     -e GF_SERVER_SERVE_FROM_SUB_PATH=true \
     -e GF_SERVER_ROOT_URL=/${GRAFANA_PATH} \
     -e GF_SERVER_ADDR=127.0.0.1 \

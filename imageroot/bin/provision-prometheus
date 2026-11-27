@@ -14,6 +14,7 @@ from collections.abc import Mapping
 
 import agent
 import metrics_alert_rules
+import metrics_basic_auth
 import yaml
 
 ALERT_MANAGER_DEFAULT_CONFIG = {
@@ -97,9 +98,13 @@ def mimir_alertmanager_config(subscription):
         'static_configs': [{'targets': [f'{url.hostname}:{port}']}],
     }
 
-def generate_prometheus_config(redis_client):
-    # Each alert goes to every Alertmanager in this list
-    alertmanagers = [{'static_configs': [{'targets': ['localhost:9093']}]}]
+def generate_prometheus_config(redis_client, creds):
+    # Each alert goes to every Alertmanager in this list. The local one
+    # requires basic auth.
+    alertmanagers = [{
+        'basic_auth': {'username': creds['username'], 'password': creds['password']},
+        'static_configs': [{'targets': ['localhost:9093']}],
+    }]
     mimir = mimir_alertmanager_config(redis_client.hgetall('cluster/subscription'))
     if mimir:
         alertmanagers.append(mimir)
@@ -117,6 +122,10 @@ def generate_prometheus_config(redis_client):
         'rule_files': ['/prometheus/rules.d/*.yml'],
     }
     write_file_if_changed('prometheus.yml', yaml.safe_dump(config, sort_keys=False))
+    # The file holds passwords but is bind-mounted into a container that runs
+    # as an unprivileged user mapped to "other": it must stay world-readable.
+    # Host users are kept out by the 0700 module home directory.
+    os.chmod('prometheus.yml', 0o644)
 
 def generate_node_configs(redis_client):
     for nkey in redis_client.scan_iter("node/*/vpn"):
@@ -254,7 +263,7 @@ def read_config(redis_client):
     if redis_client.exists(f'module/{os.environ["MODULE_ID"]}/settings'):
         config = redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/settings')
     else:
-        config = {"prometheus_path": None, "grafana_path": None, "mail_to": [], "mail_from": None, "mail_template": None}
+        config = {"grafana_path": None, "mail_to": [], "mail_from": None, "mail_template": None}
     return config
 
 def generate_alertmanagr_config(redis_client):
@@ -355,9 +364,13 @@ def provision():
     os.makedirs("prometheus.d", exist_ok=True)
     os.makedirs("rules.d", exist_ok=True)
 
+    # Prometheus and Alertmanager (which starts after it) read web-config.yml
+    creds = metrics_basic_auth.ensure_credentials()
+    metrics_basic_auth.write_web_config(creds)
+
     # Generate providers configuration
     clean_up_old_provisioned_targets(redis_client)
-    generate_prometheus_config(redis_client)
+    generate_prometheus_config(redis_client, creds)
     generate_node_configs(redis_client)
     validate_and_generate_provider_configs(raw_redis_client)
     clean_up_old_provider_configs(redis_client)

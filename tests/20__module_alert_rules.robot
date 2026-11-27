@@ -65,11 +65,9 @@ Discover Rule Publishers And Prometheus
     ${traefik_id} =    Run Command    runagent redis-exec GET cluster/default_instance/traefik
     Should Match Regexp    ${traefik_id}    ^traefik[0-9]+$
     Set Suite Variable    ${TRAEFIK_ID}    ${traefik_id}
-    ${path} =    Run Command
-    ...    runagent -m ${METRICS_ID} python3 -c 'import os; print(os.environ.get("PROMETHEUS_PATH", ""))'
-    ${prefix} =    Evaluate    urllib.parse.quote($path.strip('/'), safe='/')    modules=urllib.parse
-    ${base_url} =    Evaluate    ('http://127.0.0.1:9091/' + $prefix).rstrip('/')
-    Set Suite Variable    ${PROMETHEUS_URL}    ${base_url}
+    ${pw} =    Run Command    runagent -m ${METRICS_ID} python3 -c "import json;print(json.load(open('basic_auth.json'))['password'])"
+    # The password is URL-safe: it fits in the URL
+    Set Suite Variable    ${PROMETHEUS_URL}    http://metrics:${pw}@127.0.0.1:9091
 
 Initialize Rule Fixtures
     ${publishers} =    Create List

@@ -1,13 +1,11 @@
 *** Settings ***
 Documentation     Prometheus sends alerts to the local Alertmanager and to my Mimir
 Library           SSHLibrary
-Suite Setup       Skip If The Cluster Has A Subscription
+Suite Setup       Prepare The Suite
 Suite Teardown    Remove The Test Data
 
 *** Variables ***
 ${MID}            metrics1
-# Suite 10 sets prometheus_path=prometheus
-${PROM_API}       http://127.0.0.1:9091/prometheus/api/v1
 ${LOCAL_AM}       http://localhost:9093/api/v2/alerts
 ${MIMIR_AM}       https://mimir.invalid:443/collect/api/services/mimir/alertmanager/api/v2/alerts
 ${FAKE_SYSTEM}    fake-system
@@ -49,6 +47,12 @@ Check the Mimir password is not exposed by Prometheus
     Should Contain    ${config}    mimir.invalid
     Should Not Contain    ${config}    ${FAKE_TOKEN}
 
+Check the local Alertmanager password is not exposed by Prometheus
+    ${pw} =    Get Local Password
+    ${config} =    Execute Command    curl -sf ${PROM_API}/status/config
+    Should Not Be Empty    ${pw}
+    Should Not Contain    ${config}    ${pw}
+
 Check alerts reach the local Alertmanager while Mimir is unreachable
     Execute Command    redis-cli HSET module/${MID}/custom_alerts mimir_test '{alert: MimirTestAlwaysFiring, expr: vector(1), labels: {severity: warning}}'
     ${rc} =    Execute Command    runagent -m ${MID} systemctl --user restart prometheus.service
@@ -63,6 +67,16 @@ Check the Mimir target goes away with the subscription
     ...    Active Alertmanagers Should Be    ${LOCAL_AM}
 
 *** Keywords ***
+Get Local Password
+    ${pw} =    Execute Command    runagent -m ${MID} python3 -c "import json;print(json.load(open('basic_auth.json'))['password'])"
+    RETURN    ${pw}
+
+Prepare The Suite
+    Skip If The Cluster Has A Subscription
+    ${pw} =    Get Local Password
+    # The password is URL-safe: it fits in the URL
+    Set Suite Variable    ${PROM_API}    http://metrics:${pw}@127.0.0.1:9091/api/v1
+
 Skip If The Cluster Has A Subscription
     ${exists} =    Execute Command    redis-cli EXISTS cluster/subscription
     Skip If    '${exists}' == '1'    The node has a real subscription: not overwriting it
@@ -79,7 +93,8 @@ Active Alertmanagers Should Be
 
 Local Alertmanager Has Alert
     [Arguments]    ${name}
-    ${alerts} =    Execute Command    curl -sf http://127.0.0.1:9093/api/v2/alerts
+    ${pw} =    Get Local Password
+    ${alerts} =    Execute Command    curl -sf -u 'metrics:${pw}' http://127.0.0.1:9093/api/v2/alerts
     Should Contain    ${alerts}    "alertname":"${name}"
 
 Remove The Test Data
