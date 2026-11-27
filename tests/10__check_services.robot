@@ -16,7 +16,7 @@ Check if alertmanager is running
     ...    HTTP GET has status 401    http://127.0.0.1:9093/
 
 Unprivileged user is refused
-    ${out} =    Execute Command    runuser -u loki1 -- curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9093/api/v2/silences
+    ${out} =    Execute Command    runuser -u loki1 -- curl -s -o /dev/null -w '\%{http_code}' http://127.0.0.1:9093/api/v2/silences
     Should Be Equal    ${out}    401
 
 Check if module can be configured
@@ -33,17 +33,17 @@ Check if Grafana is accessible from Traefik with basic auth
     ...     HTTP-Basic authentication accepted    https://127.0.0.1/grafana/    admin:Nethesis,1234
 
 Grafana refuses a spoofed user header
-    ${out} =    Execute Command    curl -s -o /dev/null -w '%{http_code}' -H 'X-AUTH-USER: admin' http://127.0.0.1:3000/grafana/api/user
+    ${out} =    Execute Command    curl -s -o /dev/null -w '\%{http_code}' -H 'X-AUTH-USER: admin' http://127.0.0.1:3000/grafana/api/user
     Should Be Equal    ${out}    401
 
 Grafana login through Traefik works
-    ${out} =    Execute Command    curl -sk -w '\\n%{http_code}' -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/user
+    ${out} =    Execute Command    curl -sk -w '\\n\%{http_code}' -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/user
     Should Contain    ${out}    "login":"admin"
     Should Contain    ${out}    "isGrafanaAdmin":true
     Should End With    ${out.strip()}    200
 
 Forged token without login is refused
-    ${out} =    Execute Command    curl -sk -o /dev/null -w '%{http_code}' -H 'X-Auth-Token: x' https://127.0.0.1/grafana/api/user
+    ${out} =    Execute Command    curl -sk -o /dev/null -w '\%{http_code}' -H 'X-Auth-Token: x' https://127.0.0.1/grafana/api/user
     Should Be Equal    ${out}    401
 
 Forged token with login does not change the user
@@ -55,7 +55,7 @@ Grafana data sources work
     # The Alertmanager data source has no health check: query it through
     # the Grafana proxy, which sends the password
     ${uid} =    Execute Command    curl -sk -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/datasources | jq -r '[.[] | select(.name=="Alertmanager")] | first | .uid'
-    ${out} =    Execute Command    curl -sk -o /dev/null -w '%{http_code}' -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/datasources/proxy/uid/${uid}/api/v2/status
+    ${out} =    Execute Command    curl -sk -o /dev/null -w '\%{http_code}' -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/datasources/proxy/uid/${uid}/api/v2/status
     Should Be Equal    ${out}    200
 
 Prometheus has no Traefik route
@@ -66,7 +66,7 @@ Prometheus has no Traefik route
 Password works
     ${pw} =    Get Local Password
     FOR    ${url}    IN    http://127.0.0.1:9091/-/healthy    http://127.0.0.1:9093/-/healthy
-        ${out} =    Execute Command    curl -s -o /dev/null -w '%{http_code}' -u 'metrics:${pw}' ${url}
+        ${out} =    Execute Command    curl -s -o /dev/null -w '\%{http_code}' -u 'metrics:${pw}' ${url}
         Should Be Equal    ${out}    200
     END
 
@@ -102,7 +102,7 @@ Get Local Password
 Grafana data source is healthy
     [Arguments]    ${filter}
     ${uid} =    Execute Command    curl -sk -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/datasources | jq -r '${filter}'
-    ${out} =    Execute Command    curl -sk -o /dev/null -w '%{http_code}' -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/datasources/uid/${uid}/health
+    ${out} =    Execute Command    curl -sk -o /dev/null -w '\%{http_code}' -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/datasources/uid/${uid}/health
     Should Be Equal    ${out}    200
 
 HTTP GET has status 200
@@ -112,7 +112,7 @@ HTTP GET has status 200
 
 HTTP GET has status 401
     [Arguments]    ${url}
-    ${out} =    Execute Command    curl -s -o /dev/null -w '%{http_code}' '${url}'
+    ${out} =    Execute Command    curl -s -o /dev/null -w '\%{http_code}' '${url}'
     Should Be Equal    ${out}    401
 
 HTTP-Basic authentication accepted
