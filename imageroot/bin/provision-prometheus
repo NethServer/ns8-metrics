@@ -263,7 +263,7 @@ def read_config(redis_client):
     if redis_client.exists(f'module/{os.environ["MODULE_ID"]}/settings'):
         config = redis_client.hgetall(f'module/{os.environ["MODULE_ID"]}/settings')
     else:
-        config = {"prometheus_path": None, "grafana_path": None, "mail_to": [], "mail_from": None, "mail_template": None}
+        config = {"grafana_path": None, "mail_to": [], "mail_from": None, "mail_template": None}
     return config
 
 def generate_alertmanagr_config(redis_client):

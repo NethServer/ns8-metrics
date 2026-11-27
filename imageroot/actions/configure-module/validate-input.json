@@ -18,11 +18,6 @@
         "grafana_path"
     ],
     "properties": {
-        "prometheus_path": {
-            "type": "string",
-            "description": "Ignored, kept for compatibility. Prometheus is not exposed through Traefik.",
-            "format": "string"
-        },
         "grafana_path": {
             "type": "string",
             "description": "Path to access grafana interface, like 'grafana'. Grafana will be available at https://<hostname>/<grafana_path>. If empty, grafana will not run.",

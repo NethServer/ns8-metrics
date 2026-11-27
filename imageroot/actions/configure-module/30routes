@@ -18,9 +18,8 @@ settings = agent.redis_connect().hgetall(f'module/{os.environ["MODULE_ID"]}/sett
 grafana_path = settings.get('grafana_path', os.getenv('GRAFANA_PATH', '')).strip('/')
 http_basic_auth_url = f"http://127.0.0.1:9311/api/module/{os.environ['MODULE_ID']}/http-basic/authorize-metrics"
 
-# Prometheus is not exposed through Traefik: always remove the legacy route.
-# The prometheus_path setting is ignored.
-agent.set_env("PROMETHEUS_PATH", "")
+# Prometheus is not exposed through Traefik: remove the route of older
+# installs
 response = agent.tasks.run(
     agent_id=agent.resolve_agent_id('traefik@node'),
     action='delete-route',
