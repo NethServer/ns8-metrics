@@ -51,9 +51,12 @@ Forged token with login does not change the user
     Should Contain    ${out}    "login":"admin"
 
 Grafana data sources work
-    [Template]    Grafana data source is healthy
-    .[] | select(.uid=="prometheus") | .uid
-    [.[] | select(.name=="Alertmanager")] | first | .uid
+    Grafana data source is healthy    .[] | select(.uid=="prometheus") | .uid
+    # The Alertmanager data source has no health check: query it through
+    # the Grafana proxy, which sends the password
+    ${uid} =    Execute Command    curl -sk -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/datasources | jq -r '[.[] | select(.name=="Alertmanager")] | first | .uid'
+    ${out} =    Execute Command    curl -sk -o /dev/null -w '%{http_code}' -u 'admin:Nethesis,1234' https://127.0.0.1/grafana/api/datasources/proxy/uid/${uid}/api/v2/status
+    Should Be Equal    ${out}    200
 
 Prometheus has no Traefik route
     ${out} =    Execute Command    api-cli run module/traefik1/get-route --data '{"instance":"${MID}_prometheus"}'
@@ -79,8 +82,9 @@ Core lists the alerts with the password
 
 Password is not in module keys or environment
     ${pw} =    Get Local Password
+    Should Not Be Empty    ${pw}
     ${hits} =    Execute Command
-    ...    redis-cli --scan --pattern 'module/${MID}/*' | cat - <(redis-cli --scan --pattern 'task/module/${MID}/*') | while read -r k; do redis-cli hgetall "$k" 2>/dev/null; redis-cli get "$k" 2>/dev/null; done | grep -cF '${pw}' || true
+    ...    redis-cli --scan --pattern 'module/${MID}/*' | cat - <(redis-cli --scan --pattern 'task/module/${MID}/*') | while read -r k; do redis-cli hgetall "$k" </dev/null 2>/dev/null; redis-cli get "$k" </dev/null 2>/dev/null; done | grep -cF '${pw}' || true
     Should Be Equal    ${hits.strip()}    0
     ${env} =    Execute Command    grep -cF '${pw}' /home/${MID}/.config/state/environment || true
     Should Be Equal    ${env.strip()}    0
